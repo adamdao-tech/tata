@@ -84,3 +84,6 @@ tr.overdue td { background: #fdf0ed; }
 }
 .betonsum { align-self: flex-end; padding: 6px 4px; }
 .warn { color: var(--warn); font-weight: 600; margin: 6px 0 0; }
+.mtag { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; background: #e8eef7; color: #2d4f7c; padding: 1px 6px; border-radius: 4px; margin-bottom: 2px; }
+tr.mat td:first-child { border-left: 3px solid #a9c1e0; }
+.parts { color: var(--muted); margin-bottom: 4px; }

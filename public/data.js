@@ -17,7 +17,6 @@ const CATS = [
   ['sloupky', 'Sloupky a vzpěry'],
   ['doplnky', 'Doplňky'],
   ['prace', 'Práce navíc'],
-  ['material', 'Materiál (beton apod.)'],
   ['vlastni', 'Vlastní položky'],
 ];
 
@@ -224,7 +223,9 @@ const DEFAULT_SETTINGS = {
   minWork: 3500,         // minimální cena montáže bez dopravy a materiálu
   minWorkOn: true,
   betonPrice: 0,         // výchozí Kč/m³ (nepovinné – cena se zadává u každé zakázky)
-  markupBeton: true,     // přirážka i na beton
+  markupBeton: false,    // přirážka na beton (táta ji nedává)
+  matMarkup: 30,         // přirážka na materiál v %
+  settingsVersion: 2,
   betonPerPost: 0.03,    // m³ betonu na 1 sloupek (10 sloupků = 0,3 m³)
   vatPayer: false,
   vatRate: 21,

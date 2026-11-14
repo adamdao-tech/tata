@@ -3,8 +3,8 @@
 Jednoduchý web pro tátu: výpočet ceny zakázky (montáž plotů, branek, bran, pohonů) a vystavení faktury.
 
 - **Zakázka** – rychlé přidání plotu (pletivo, 2D, 3D, betonový…, s/bez podhrabové desky 20/30 cm), branek a bran (patka, pohon, 3D/WPC příplatek), cokoliv z ceníku nebo vlastní řádek. Pásmo A/B/C (0–25 / 26–150 / 151+ m) se volí automaticky podle délky, jde přepnout ručně. Cenu na řádku jde přepsat.
-- **Přirážka 30 %** na všechny ceny z ceníku (měnitelná v Nastavení), doprava 12 Kč/km (min. 500 Kč), hlídání minimální ceny montáže 3 500 Kč.
-- **Ceník** – předvyplněný podle „Ceník prací pro montážní partnery“ (rev. 3. 11. 2026), vše editovatelné, vlastní položky.
+- **Přirážka 30 %** na práci i materiál (měnitelná v Nastavení), beton bez přirážky (0,03 m³ na sloupek), doprava 12 Kč/km (min. 500 Kč), hlídání minimální ceny montáže 3 500 Kč.
+- **Ceník** – práce podle „Ceník prací pro montážní partnery“ (rev. 3. 11. 2026), materiál podle ceníku RETIC CZ (od 1. 10. 2026, bez DPH), vše editovatelné, vlastní položky.
 - **Faktury** – vytvoření ze zakázky, ruční úprava všech polí a řádků, tisk / uložení do PDF, číslování RRRRNNNN, plátce/neplátce DPH.
 - **Tisk cenové nabídky** ze zakázky.
 

@@ -9,7 +9,11 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
 const fmtDate = d => d ? new Date(d).toLocaleDateString('cs-CZ') : '';
-const catName = id => (CATS.find(c => c[0] === id) || [, id])[1];
+const WORK_CATS = CATS.filter(c => c[0] !== 'vlastni');
+const ALL_CATS = [...WORK_CATS, ...MAT_CATS, ['vlastni', 'Vlastní položky']];
+const catName = id => (ALL_CATS.find(c => c[0] === id) || [, id])[1];
+const isMat = it => !!it && (!!it.material || String(it.cat).startsWith('mat-'));
+const r2 = n => Math.round(n * 100) / 100;
 
 // ---------- data ----------
 const KEY = 'tata-ploty-v1';
@@ -23,10 +27,12 @@ function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY)); } catch (e) { /* nic */ }
   d = d || {};
+  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 2;
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}), supplier: { ...DEFAULT_SETTINGS.supplier, ...(d.settings?.supplier || {}) } };
+  if (oldVer < 2) { d.settings.markupBeton = false; d.settings.settingsVersion = 2; } // beton bez přirážky
   const cat = d.catalog || [];
   const ids = new Set(cat.map(i => i.id));
-  for (const i of DEFAULT_CATALOG) if (!ids.has(i.id)) cat.push(JSON.parse(JSON.stringify(i)));
+  for (const i of [...DEFAULT_CATALOG, ...DEFAULT_MATERIALS]) if (!ids.has(i.id)) cat.push(JSON.parse(JSON.stringify(i)));
   d.catalog = cat.filter(i => i.id !== 'beton-m3'); // beton je teď samostatná sekce zakázky
   d.orders = d.orders || [];
   d.invoices = d.invoices || [];
@@ -44,7 +50,8 @@ const item = id => S.catalog.find(i => i.id === id);
 const mk = () => 1 + num(S.settings.markup) / 100;
 const tierFor = q => (q <= 25 ? 'A' : q <= 150 ? 'B' : 'C');
 const basePrice = (it, tier) => it.tiered ? num(it.prices[tier]) : num(it.price);
-const finalPrice = (it, tier) => Math.round(basePrice(it, tier) * mk());
+const matMk = () => 1 + num(S.settings.matMarkup) / 100;
+const finalPrice = (it, tier) => isMat(it) ? r2(basePrice(it, tier) * matMk()) : Math.round(basePrice(it, tier) * mk());
 
 function lineCalc(l) {
   const it = l.itemId ? item(l.itemId) : null;
@@ -52,7 +59,7 @@ function lineCalc(l) {
   if (it && it.tiered) tier = l.tier && l.tier !== 'auto' ? l.tier : tierFor(num(l.qty));
   const hasOverride = l.price !== null && l.price !== undefined && l.price !== '';
   const unit = hasOverride ? num(l.price) : (it ? finalPrice(it, tier) : 0);
-  let total = unit * num(l.qty);
+  let total = r2(unit * num(l.qty));
   let minApplied = false;
   if (it && it.min && !hasOverride) {
     const m = Math.round(it.min * mk());
@@ -107,8 +114,10 @@ function orderRows(o) {
     if (c.minApplied) name += ' (minimální cena)';
     return { line: l, name, unit: l.unit || (it ? it.unit : 'ks'), qty: num(l.qty),
       price: c.minApplied ? c.total / (num(l.qty) || 1) : c.unit, total: c.total,
-      material: it && it.cat === 'material', calc: c };
+      material: isMat(it) || (!it && l.material), calc: c };
   });
+  // nejdřív práce, pak materiál
+  rows.sort((a, b) => (a.material ? 1 : 0) - (b.material ? 1 : 0));
   const extra = [];
   const work = rows.filter(r => !r.material).reduce((a, r) => a + r.total, 0);
   if (s.minWorkOn && work > 0) {
@@ -123,11 +132,15 @@ function orderRows(o) {
     if (s.markupTransport) t = Math.round(t * mk());
     extra.push({ name: `Doprava (${km} km)`, unit: 'ks', qty: 1, price: t, total: t, auto: true });
   }
-  return { rows, extra, all: [...rows, ...extra] };
+  const sum = f => r2(rows.filter(f).reduce((a, r) => a + r.total, 0));
+  const parts = { work: sum(r => !r.material), material: sum(r => r.material),
+    beton: bc.m3 > 0 ? bc.total : 0, transport: r2(extra.filter(x => x.name.startsWith('Doprava')).reduce((a, x) => a + x.total, 0)),
+    minFill: r2(extra.filter(x => x.name.startsWith('Doplatek')).reduce((a, x) => a + x.total, 0)) };
+  return { rows, extra, all: [...rows, ...extra], parts };
 }
 
 function totals(rows, vatPayer, vatRate) {
-  const base = rows.reduce((a, r) => a + num(r.qty) * num(r.price), 0);
+  const base = r2(rows.reduce((a, r) => a + num(r.qty) * num(r.price), 0));
   const vat = vatPayer ? Math.round(base * num(vatRate)) / 100 : 0;
   return { base, vat, total: base + vat };
 }
@@ -136,6 +149,7 @@ function totals(rows, vatPayer, vatRate) {
 let tab = 'zakazka';
 let editInvoiceId = null;
 let catFilter = '';
+let catGroup = 'work';
 
 function go(t) { tab = t; if (t !== 'faktura') editInvoiceId = null; render(); window.scrollTo(0, 0); }
 
@@ -154,14 +168,15 @@ function render() {
 function viewOrder() {
   const o = S.current;
   const c = o.customer;
-  const { rows, extra, all } = orderRows(o);
+  const { rows, extra, all, parts } = orderRows(o);
   const t = totals(all, S.settings.vatPayer, S.settings.vatRate);
   const bc = betonCalc(o);
   if (!o.beton) o.beton = { m3: '', price: '' };
   const saved = S.orders.some(x => x.id === o.id);
   const fenceOpts = Object.entries(FENCE_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
   const gateOpts = Object.entries(GATE_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
-  const catOpts = CATS.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('');
+  const matCatOpts = MAT_CATS.map(([k, n]) => `<option value="${k}">${esc(n.replace('Materiál – ', ''))}</option>`).join('');
+  const catOpts = [...WORK_CATS, ['vlastni', 'Vlastní položky']].map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('');
 
   return `
   <section class="card">
@@ -200,7 +215,16 @@ function viewOrder() {
       <span id="gOpts">${gateOptsHtml('branka')}</span>
       <button onclick="app.addGate()">Přidat</button>
     </div>
-    <h3>📋 Z ceníku / vlastní řádek</h3>
+    <h3>📦 Materiál <span class="small muted">(přirážka ${S.settings.matMarkup} %)</span></h3>
+    <div class="row wrap">
+      <input id="mSearch" placeholder="🔍 hledat materiál, např. pluto 1530" oninput="app.fillMatItems()" style="min-width:230px">
+      <select id="mCat" onchange="$('#mSearch').value='';app.fillMatItems()">${matCatOpts}</select>
+      <select id="mItem" style="max-width:460px">${matItemOpts('mat-pletivo', '')}</select>
+      <input id="mQty" type="number" min="0" step="1" placeholder="množství" style="width:110px">
+      <button onclick="app.addMat()">Přidat</button>
+      <button class="ghost" onclick="app.addCustom(true)">+ Vlastní materiál</button>
+    </div>
+    <h3>📋 Práce z ceníku / vlastní řádek</h3>
     <div class="row wrap">
       <select id="cCat" onchange="app.fillCatItems()">${catOpts}</select>
       <select id="cItem">${catItemOpts('pletivo')}</select>
@@ -236,8 +260,9 @@ function viewOrder() {
     </table></div>` : '<p class="muted">Zatím žádné položky. Přidej plot, bránu nebo něco z ceníku nahoře.</p>'}
     <div class="totals">
       ${S.settings.vatPayer ? `<div>Základ <b>${kc(t.base)}</b></div><div>DPH ${S.settings.vatRate} % <b>${kc(t.vat)}</b></div>` : ''}
+      <div class="parts small">Práce <b>${kc(parts.work + parts.minFill)}</b> · Materiál <b>${kc(parts.material)}</b> · Beton <b>${kc(parts.beton)}</b> · Doprava <b>${kc(parts.transport)}</b></div>
       <div class="big">Celkem ${S.settings.vatPayer ? 's DPH' : ''} <b>${kc(t.total)}</b></div>
-      <div class="muted small">Ceny obsahují přirážku ${S.settings.markup} %. ${S.settings.vatPayer ? '' : 'Neplátce DPH.'}</div>
+      <div class="muted small">Práce +${S.settings.markup} %, materiál +${S.settings.matMarkup} %${S.settings.markupBeton ? ', beton +' + S.settings.markup + ' %' : ', beton bez přirážky'}. ${S.settings.vatPayer ? '' : 'Neplátce DPH.'}</div>
     </div>
     <label>Poznámka<textarea onchange="app.setO('note',this.value)" rows="2">${esc(o.note)}</textarea></label>
     <div class="row wrap">
@@ -253,12 +278,12 @@ function lineRow(r) {
     ? `<select onchange="app.updLine('${l.id}','tier',this.value)" title="A 0–25 m, B 26–150 m, C 151 m+">
         ${['auto', 'A', 'B', 'C'].map(x => `<option value="${x}" ${(l.tier || 'auto') === x ? 'selected' : ''}>${x === 'auto' ? 'auto (' + c.tier + ')' : x}</option>`).join('')}
        </select>` : '';
-  return `<tr>
-    <td><input class="wide" value="${esc(lineName(l))}" onchange="app.updLine('${l.id}','name',this.value)">${c.minApplied ? '<div class="small muted">použita minimální cena</div>' : ''}</td>
+  return `<tr class="${r.material ? 'mat' : ''}">
+    <td>${r.material ? '<span class="mtag">materiál</span>' : ''}<input class="wide" value="${esc(lineName(l))}" onchange="app.updLine('${l.id}','name',this.value)">${c.minApplied ? '<div class="small muted">použita minimální cena</div>' : ''}</td>
     <td>${tierSel}</td>
     <td class="r"><input class="n" type="number" min="0" step="0.5" value="${esc(l.qty)}" onchange="app.updLine('${l.id}','qty',this.value)"></td>
     <td><input class="u" value="${esc(r.unit)}" onchange="app.updLine('${l.id}','unit',this.value)"></td>
-    <td class="r"><input class="n ${c.hasOverride ? 'ovr' : ''}" type="number" step="1" value="${c.hasOverride ? esc(l.price) : ''}" placeholder="${c.unit}" title="Prázdné = cena z ceníku. Vyplň pro ruční cenu." onchange="app.updLine('${l.id}','price',this.value)"></td>
+    <td class="r"><input class="n ${c.hasOverride ? 'ovr' : ''}" type="number" step="${r.material ? '0.01' : '1'}" value="${c.hasOverride ? esc(l.price) : ''}" placeholder="${c.unit}" title="Prázdné = cena z ceníku. Vyplň pro ruční cenu." onchange="app.updLine('${l.id}','price',this.value)"></td>
     <td class="r">${kc(r.total)}</td>
     <td><button class="x" onclick="app.delLine('${l.id}')" title="Smazat">✕</button></td>
   </tr>`;
@@ -289,6 +314,13 @@ function gateOptsHtml(type) {
     if (type !== 'branka') h += `<label class="chk"><input type="checkbox" id="gWpc"> WPC</label>`;
   }
   return h;
+}
+function matItemOpts(cat, q) {
+  const words = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean);
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const list = S.catalog.filter(i => isMat(i) && (words.length ? words.every(w => norm(i.name).includes(w)) : i.cat === cat));
+  if (!list.length) return '<option value="">nic nenalezeno</option>';
+  return list.slice(0, 300).map(i => `<option value="${i.id}">${esc(i.name)} – ${kc(finalPrice(i))}/${esc(i.unit)}</option>`).join('');
 }
 function catItemOpts(cat) {
   return S.catalog.filter(i => i.cat === cat).map(i =>
@@ -387,30 +419,36 @@ function setPath(o, p, v) { const ks = p.split('.'); const last = ks.pop(); ks.r
 // ---------- CENÍK ----------
 function viewCatalog() {
   const f = catFilter.toLowerCase();
-  const groups = CATS.map(([cat, name]) => {
+  const groups = ALL_CATS.filter(([cat]) => catGroup === 'all' || (catGroup === 'mat') === cat.startsWith('mat-')).map(([cat, name]) => {
     const items = S.catalog.filter(i => i.cat === cat && (!f || i.name.toLowerCase().includes(f)));
+    if (cat === 'vlastni' && catGroup === 'mat') return '';
     if (!items.length && (f || cat !== 'vlastni')) return '';
     return `<section class="card"><h3>${esc(name)}</h3><div class="tablewrap"><table class="cat">
-      <thead><tr><th>Položka</th><th>Jedn.</th><th class="r">Základ (z ceníku)</th><th class="r">S přirážkou ${S.settings.markup} %</th><th></th></tr></thead><tbody>
+      <thead><tr><th>Položka</th><th>Jedn.</th><th class="r">Základ (z ceníku)</th><th class="r">S přirážkou ${cat.startsWith('mat-') ? S.settings.matMarkup : S.settings.markup} %</th><th></th></tr></thead><tbody>
       ${items.map(i => `<tr>
         <td><input class="wide" value="${esc(i.name)}" onchange="app.setItem('${i.id}','name',this.value)"></td>
         <td><input class="u" value="${esc(i.unit)}" onchange="app.setItem('${i.id}','unit',this.value)"></td>
         <td class="r nowrap">${i.tiered
           ? ['A', 'B', 'C'].map(t => `<span class="tier">${t}<input class="n" type="number" value="${esc(i.prices[t])}" onchange="app.setItem('${i.id}','${t}',this.value)"></span>`).join('')
-          : `<input class="n" type="number" value="${esc(i.price)}" onchange="app.setItem('${i.id}','price',this.value)">`}
+          : `<input class="n" type="number" step="${isMat(i) ? '0.01' : '1'}" value="${esc(i.price)}" onchange="app.setItem('${i.id}','price',this.value)">`}
           ${i.min ? `<div class="small muted">min. ${i.min} Kč</div>` : ''}</td>
-        <td class="r nowrap"><b>${i.tiered ? ['A', 'B', 'C'].map(t => finalPrice(i, t)).join(' / ') : finalPrice(i)}</b> Kč</td>
+        <td class="r nowrap"><b>${i.tiered ? ['A', 'B', 'C'].map(t => finalPrice(i, t)).join(' / ') + ' Kč' : kc(finalPrice(i))}</b></td>
         <td class="nowrap"><button class="ghost" onclick="app.quickAdd('${i.id}')" title="Přidat do aktuální zakázky">+ do zakázky</button>
           ${i.custom ? `<button class="x" onclick="app.delItem('${i.id}')">✕</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></section>`;
   }).join('');
   return `<section class="card">
-    <div class="row between wrap"><h2>Ceník</h2><input placeholder="🔍 hledat…" value="${esc(catFilter)}" oninput="app.filterCat(this.value)" id="catSearch"></div>
-    <p class="muted small">Zadávají se základní ceny z ceníku, přirážka ${S.settings.markup} % se dopočítá sama (změníš v Nastavení).
+    <div class="row between wrap"><h2>Ceník</h2>
+      <div class="row wrap"><select onchange="app.setCatGroup(this.value)">
+        <option value="work" ${catGroup === 'work' ? 'selected' : ''}>Práce (montáž)</option>
+        <option value="mat" ${catGroup === 'mat' ? 'selected' : ''}>Materiál</option>
+        <option value="all" ${catGroup === 'all' ? 'selected' : ''}>Vše</option></select>
+      <input placeholder="🔍 hledat…" value="${esc(catFilter)}" oninput="app.filterCat(this.value)" id="catSearch"></div></div>
+    <p class="muted small">Zadávají se základní ceny z ceníku (bez DPH), přirážka se dopočítá sama: práce ${S.settings.markup} %, materiál ${S.settings.matMarkup} % (změníš v Nastavení). Materiál: RETIC CZ, ceník od 1. 10. 2026.
     Pásma: <b>A</b> 0–25 m, <b>B</b> 26–150 m, <b>C</b> 151 m+.</p>
     <details><summary>+ Přidat vlastní položku</summary>
       <div class="row wrap">
-        <select id="niCat">${CATS.map(([k, n]) => `<option value="${k}" ${k === 'vlastni' ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <select id="niCat">${ALL_CATS.map(([k, n]) => `<option value="${k}" ${k === 'vlastni' ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <input id="niName" placeholder="název" style="flex:1;min-width:200px">
         <input id="niUnit" placeholder="jedn." value="ks" style="width:70px">
         <input id="niPrice" type="number" placeholder="základní cena" style="width:130px">
@@ -432,7 +470,8 @@ function viewSettings() {
   </section>
   <section class="card"><h2>Výpočet</h2>
     <div class="grid">
-      ${N('markup', 'Přirážka na ceník (%)')}
+      ${N('markup', 'Přirážka na práci (%)')}
+      ${N('matMarkup', 'Přirážka na materiál (%)')}
       ${N('kmRate', 'Doprava Kč/km')}
       ${N('kmMin', 'Minimální doprava (Kč)')}
       ${N('minWork', 'Minimální cena montáže (Kč, bez přirážky)')}
@@ -559,7 +598,14 @@ const app = {
     const id = $('#cItem').value; if (!id) return;
     app.addLine(id, $('#cQty').value || 1); save(); render();
   },
-  addCustom() { S.current.lines.push({ id: uid(), itemId: null, name: 'Vlastní položka', unit: 'ks', qty: 1, price: 0 }); save(); render(); },
+  addCustom(mat) { S.current.lines.push({ id: uid(), itemId: null, name: mat ? 'Materiál' : 'Vlastní položka', unit: 'ks', qty: 1, price: 0, material: !!mat }); save(); render(); },
+  fillMatItems() { $('#mItem').innerHTML = matItemOpts($('#mCat').value, $('#mSearch').value); },
+  addMat() {
+    const id = $('#mItem').value; if (!id) return;
+    const q = num($('#mQty').value);
+    if (!q) { alert('Zadej množství.'); $('#mQty').focus(); return; }
+    app.addLine(id, q); save(); render();
+  },
   quickAdd(id) {
     const it = item(id);
     const q = prompt(`Množství (${it.unit}) – ${it.name}`, '1'); if (q === null) return;
@@ -607,16 +653,18 @@ const app = {
     else it[k] = v;
     save(); render();
   },
+  setCatGroup(v) { catGroup = v; render(); },
   filterCat(v) { catFilter = v; render(); const el = $('#catSearch'); el.focus(); el.setSelectionRange(v.length, v.length); },
   addItem() {
     const name = $('#niName').value.trim(); if (!name) { alert('Zadej název.'); return; }
-    S.catalog.push({ id: 'c-' + uid(), cat: $('#niCat').value, name, unit: $('#niUnit').value || 'ks', tiered: false, price: num($('#niPrice').value), custom: true });
+    const cat = $('#niCat').value;
+    S.catalog.push({ id: 'c-' + uid(), cat, name, unit: $('#niUnit').value || 'ks', tiered: false, price: num($('#niPrice').value), custom: true, material: cat.startsWith('mat-') });
     save(); render();
   },
   delItem(id) { if (!confirm('Smazat položku z ceníku?')) return; S.catalog = S.catalog.filter(i => i.id !== id); save(); render(); },
   resetCatalog() {
     if (!confirm('Vrátit všechny ceny na původní ceník? Vlastní položky zůstanou.')) return;
-    S.catalog = [...JSON.parse(JSON.stringify(DEFAULT_CATALOG)), ...S.catalog.filter(i => i.custom)];
+    S.catalog = [...JSON.parse(JSON.stringify([...DEFAULT_CATALOG, ...DEFAULT_MATERIALS])), ...S.catalog.filter(i => i.custom)];
     save(); render(); toast('Ceník obnoven');
   },
 
