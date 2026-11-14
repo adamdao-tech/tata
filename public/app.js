@@ -27,9 +27,13 @@ function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY)); } catch (e) { /* nic */ }
   d = d || {};
-  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 2;
+  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 3;
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}), supplier: { ...DEFAULT_SETTINGS.supplier, ...(d.settings?.supplier || {}) } };
   if (oldVer < 2) { d.settings.markupBeton = false; d.settings.settingsVersion = 2; } // beton bez přirážky
+  if (oldVer < 3) { // přejmenování „Pletivo – …“ na „Čtyřhranné pletivo – …“
+    (d.catalog || []).forEach(i => { if (i.cat === 'pletivo' && /^Pletivo – /.test(i.name)) i.name = i.name.replace(/^Pletivo – /, 'Čtyřhranné pletivo – '); });
+    d.settings.settingsVersion = 3;
+  }
   const cat = d.catalog || [];
   const ids = new Set(cat.map(i => i.id));
   for (const i of [...DEFAULT_CATALOG, ...DEFAULT_MATERIALS]) if (!ids.has(i.id)) cat.push(JSON.parse(JSON.stringify(i)));

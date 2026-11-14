@@ -3,7 +3,7 @@
 'use strict';
 
 const CATS = [
-  ['pletivo', 'Pletivo – klasický plot'],
+  ['pletivo', 'Čtyřhranné pletivo'],
   ['p2d', 'Plotové panely 2D'],
   ['p3d', 'Plotové panely 3D'],
   ['beton', 'Betonový plot'],
@@ -40,11 +40,11 @@ function panels(cat, label) {
 
 const DEFAULT_CATALOG = [
   // Pletivo
-  T('plet-klas', 'pletivo', 'Pletivo – klasická montáž (beton, patky)', 'bm', 312, 241, 219),
-  T('plet-vruty', 'pletivo', 'Pletivo – montáž na zemní vruty', 'bm', 312, 241, 219),
-  T('plet-pd20', 'pletivo', 'Pletivo – s podhrabovou deskou 20 cm', 'bm', 402, 327, 299),
-  T('plet-pd30', 'pletivo', 'Pletivo – s podhrabovou deskou 30 cm', 'bm', 414, 333, 304),
-  T('plet-2pd', 'pletivo', 'Pletivo – s 2× podhrabovou deskou', 'bm', 472, 374, 352),
+  T('plet-klas', 'pletivo', 'Čtyřhranné pletivo – klasická montáž (beton, patky)', 'bm', 312, 241, 219),
+  T('plet-vruty', 'pletivo', 'Čtyřhranné pletivo – montáž na zemní vruty', 'bm', 312, 241, 219),
+  T('plet-pd20', 'pletivo', 'Čtyřhranné pletivo – s podhrabovou deskou 20 cm', 'bm', 402, 327, 299),
+  T('plet-pd30', 'pletivo', 'Čtyřhranné pletivo – s podhrabovou deskou 30 cm', 'bm', 414, 333, 304),
+  T('plet-2pd', 'pletivo', 'Čtyřhranné pletivo – s 2× podhrabovou deskou', 'bm', 472, 374, 352),
   T('plet-nat', 'pletivo', 'Natažení pletiva na stávající sloupky', 'bm', 168, 114, 104),
   P('plet-uchyt', 'pletivo', 'Úchyt oplocení k podhrabové desce', 'ks', 52),
 
@@ -171,7 +171,7 @@ const DEFAULT_CATALOG = [
 
 // Rychlé přidání plotu: typ → varianty [popisek, id položky]
 const FENCE_TYPES = {
-  pletivo: { label: 'Klasický plot (pletivo)', heights: [80, 100, 125, 150, 160, 175, 180, 200], spacing: 2.5, variants: [
+  pletivo: { label: 'Čtyřhranné pletivo', heights: [80, 100, 125, 150, 160, 175, 180, 200], spacing: 2.5, variants: [
     ['Bez podhrabové desky', 'plet-klas'], ['S PD 20 cm', 'plet-pd20'], ['S PD 30 cm', 'plet-pd30'],
     ['S 2× PD', 'plet-2pd'], ['Na zemní vruty', 'plet-vruty'], ['Na stávající sloupky', 'plet-nat']] },
   p2d: { label: '2D plot (panely)', heights: [83, 103, 123, 143, 163, 183, 203], spacing: 2.5, variants: [
@@ -225,7 +225,7 @@ const DEFAULT_SETTINGS = {
   betonPrice: 0,         // výchozí Kč/m³ (nepovinné – cena se zadává u každé zakázky)
   markupBeton: false,    // přirážka na beton (táta ji nedává)
   matMarkup: 30,         // přirážka na materiál v %
-  settingsVersion: 2,
+  settingsVersion: 3,
   betonPerPost: 0.03,    // m³ betonu na 1 sloupek (10 sloupků = 0,3 m³)
   vatPayer: false,
   vatRate: 21,
