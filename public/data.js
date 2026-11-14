@@ -172,22 +172,22 @@ const DEFAULT_CATALOG = [
 
 // Rychlé přidání plotu: typ → varianty [popisek, id položky]
 const FENCE_TYPES = {
-  pletivo: { label: 'Klasický plot (pletivo)', heights: [80, 100, 125, 150, 160, 175, 180, 200], spacing: 2.5, perM3: 37, variants: [
+  pletivo: { label: 'Klasický plot (pletivo)', heights: [80, 100, 125, 150, 160, 175, 180, 200], spacing: 2.5, variants: [
     ['Bez podhrabové desky', 'plet-klas'], ['S PD 20 cm', 'plet-pd20'], ['S PD 30 cm', 'plet-pd30'],
     ['S 2× PD', 'plet-2pd'], ['Na zemní vruty', 'plet-vruty'], ['Na stávající sloupky', 'plet-nat']] },
-  p2d: { label: '2D plot (panely)', heights: [83, 103, 123, 143, 163, 183, 203], spacing: 2.5, perM3: 37, variants: [
+  p2d: { label: '2D plot (panely)', heights: [83, 103, 123, 143, 163, 183, 203], spacing: 2.5, variants: [
     ['Bez podhrabové desky', 'p2d-klas'], ['S PD 20 cm', 'p2d-pd20'], ['S PD 30 cm', 'p2d-pd30'],
     ['S 2× PD', 'p2d-2pd'], ['S betonovou deskou místo PD', 'p2d-bd'], ['Na stávající sloupky', 'p2d-stav'],
     ['2 panely nad sebou', 'p2d-2n'], ['2 nad sebou s PD 20 cm', 'p2d-2n-pd20'], ['2 nad sebou s PD 30 cm', 'p2d-2n-pd30']] },
-  p3d: { label: '3D plot (panely)', heights: [83, 103, 123, 153, 173, 203], spacing: 2.5, perM3: 37, variants: [
+  p3d: { label: '3D plot (panely)', heights: [83, 103, 123, 153, 173, 203], spacing: 2.5, variants: [
     ['Bez podhrabové desky', 'p3d-klas'], ['S PD 20 cm', 'p3d-pd20'], ['S PD 30 cm', 'p3d-pd30'],
     ['S 2× PD', 'p3d-2pd'], ['S betonovou deskou místo PD', 'p3d-bd'], ['Na stávající sloupky', 'p3d-stav'],
     ['2 panely nad sebou', 'p3d-2n'], ['2 nad sebou s PD 20 cm', 'p3d-2n-pd20'], ['2 nad sebou s PD 30 cm', 'p3d-2n-pd30']] },
-  beton: { label: 'Betonový plot', heights: [], spacing: 2, perM3: 10, variants: [
+  beton: { label: 'Betonový plot', heights: [], spacing: 2, variants: [
     ['100 cm', 'bet-100'], ['150 cm', 'bet-150'], ['175–200 cm', 'bet-200'], ['Nad 200 cm', 'bet-200p']] },
-  magic: { label: 'Betonový plot MAGICRETE', heights: [], spacing: 2, perM3: 10, variants: [
+  magic: { label: 'Betonový plot MAGICRETE', heights: [], spacing: 2, variants: [
     ['100 cm', 'mag-100'], ['150 cm', 'mag-150'], ['175 a 200 cm', 'mag-200'], ['Nad 200 cm', 'mag-200p']] },
-  hlinik: { label: 'Hliníková lamelová pole', heights: [100, 120, 140, 160, 180, 200], spacing: 2.5, perM3: 37, variants: [
+  hlinik: { label: 'Hliníková lamelová pole', heights: [100, 120, 140, 160, 180, 200], spacing: 2.5, variants: [
     ['Bez PD', 'hl-klas'], ['S PD 20 cm', 'hl-pd20'], ['S PD 30 cm', 'hl-pd30']] },
 };
 
@@ -195,14 +195,15 @@ const FENCE_TYPES = {
 // Varianty plotu, kde se nebetonují sloupky (vruty, stávající sloupky)
 const NO_BETON = ['plet-vruty', 'plet-nat', 'p2d-stav', 'p3d-stav'];
 
-// Odhad betonu na kus (m³). Podle ceníku: ~37 klasických sloupků = 1 m³,
-// patka posuvné brány do 6 m = 2 m³, nad 6 m = 3 m³. Uprav podle zkušenosti.
-const BETON_PER_ITEM = {
-  'br-branka': 0.1, 'br-dvou-5': 0.15, 'br-dvou-5p': 0.2,
-  'pos-sam-p': 2, 'pos-sam5-p': 2, 'pos-tel-p': 3, 'pos-kol-p': 2, 'pos-kol5-p': 2,
-  'sl-ks': 1 / 37, 'sl-vzp': 1 / 37, 'sl-plet': 1 / 37 / 2.5 * 1, 'sl-plet-pd': 1 / 37 / 2.5, 'sl-pan': 1 / 37 / 2.5, 'sl-pan-pd': 1 / 37 / 2.5,
-  'wpc-3': 1 / 37 / 1.8, 'wpc-4': 1 / 37 / 1.8, 'wpc-pole': 0.03, 'plech-s': 1 / 37 / 2.5, 'lesni': 1 / 37 / 3,
+// Beton: počet sloupků na jednotku položky (plot se počítá z délky: pole á spacing m + 1 sloupek).
+// Spotřeba na sloupek je v Nastavení (výchozí 0,03 m³ = 10 sloupků → 0,3 m³).
+const POSTS_PER_ITEM = {
+  'br-branka': 2, 'br-dvou-5': 2, 'br-dvou-5p': 2,
+  'sl-ks': 1, 'sl-vzp': 1, 'sl-plet': 1 / 2.5, 'sl-plet-pd': 1 / 2.5, 'sl-pan': 1 / 2.5, 'sl-pan-pd': 1 / 2.5,
+  'wpc-3': 1 / 1.8, 'wpc-4': 1 / 1.8, 'wpc-pole': 1, 'plech-s': 1 / 2.5, 'lesni': 1 / 3,
 };
+// Pevné množství betonu na kus (m³) – patky posuvných bran (ceník: do 6 m = 2 m³, nad 6 m = 3 m³)
+const BETON_FIXED = { 'pos-sam-p': 2, 'pos-sam5-p': 2, 'pos-tel-p': 3, 'pos-kol-p': 2, 'pos-kol5-p': 2 };
 
 const GATE_TYPES = {
   branka: { label: 'Branka (jednokřídlá do 2 m)', item: 'br-branka', kind: 'kridl' },
@@ -222,9 +223,9 @@ const DEFAULT_SETTINGS = {
   markupTransport: true, // přirážka i na dopravu
   minWork: 3500,         // minimální cena montáže bez dopravy a materiálu
   minWorkOn: true,
-  betonPrice: 0,         // Kč/m³ bez přirážky (z betonárky)
+  betonPrice: 0,         // výchozí Kč/m³ (nepovinné – cena se zadává u každé zakázky)
   markupBeton: true,     // přirážka i na beton
-  betonStep: 0.5,        // zaokrouhlení odhadu nahoru (m³)
+  betonPerPost: 0.03,    // m³ betonu na 1 sloupek (10 sloupků = 0,3 m³)
   vatPayer: false,
   vatRate: 21,
   dueDays: 14,

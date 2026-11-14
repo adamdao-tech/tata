@@ -73,26 +73,28 @@ const FENCE_BY_ITEM = {};
 for (const ft of Object.values(FENCE_TYPES)) for (const [, id] of ft.variants) FENCE_BY_ITEM[id] = ft;
 
 function betonEstimate(o) {
-  let m3 = 0;
+  let posts = 0, fixed = 0;
   for (const l of o.lines) {
     const q = num(l.qty);
     if (!l.itemId || !q || NO_BETON.includes(l.itemId)) continue;
     const ft = FENCE_BY_ITEM[l.itemId];
-    if (ft) m3 += (Math.ceil(q / ft.spacing) + 1) / ft.perM3; // sloupky = pole + 1
-    else if (BETON_PER_ITEM[l.itemId]) m3 += BETON_PER_ITEM[l.itemId] * q;
+    if (ft) posts += Math.ceil(q / ft.spacing) + 1; // sloupky = počet polí + 1
+    else if (POSTS_PER_ITEM[l.itemId]) posts += Math.ceil(POSTS_PER_ITEM[l.itemId] * q);
+    else if (BETON_FIXED[l.itemId]) fixed += BETON_FIXED[l.itemId] * q;
   }
-  const step = num(S.settings.betonStep) || 0.5;
-  return m3 > 0 ? Math.ceil(m3 / step - 1e-9) * step : 0;
+  const m3 = Math.round((posts * num(S.settings.betonPerPost) + fixed) * 100) / 100;
+  return { posts, fixed, m3 };
 }
 
 function betonCalc(o) {
   const b = o.beton || { m3: '', price: '' };
-  const est = betonEstimate(o);
+  const e = betonEstimate(o);
+  const est = e.m3;
   const manual = b.m3 !== '' && b.m3 !== null && b.m3 !== undefined;
   const m3 = manual ? num(b.m3) : est;
   const basePrice = b.price !== '' && b.price !== null && b.price !== undefined ? num(b.price) : num(S.settings.betonPrice);
   const unit = S.settings.markupBeton ? Math.round(basePrice * mk()) : basePrice;
-  return { est, manual, m3, basePrice, unit, total: Math.round(m3 * unit) };
+  return { est, e, manual, m3, basePrice, unit, total: Math.round(m3 * unit * 100) / 100 };
 }
 
 // Vrátí všechny řádky zakázky v konečné podobě (pro tabulku, nabídku i fakturu)
@@ -212,14 +214,14 @@ function viewOrder() {
   <section class="card">
     <h3>🪨 Beton</h3>
     <div class="row wrap">
-      <label>Množství (m³)<input type="number" min="0" step="0.25" value="${bc.manual ? esc(o.beton.m3) : ''}" placeholder="${bc.est}" onchange="app.setBeton('m3',this.value)" class="${bc.manual ? 'ovr' : ''}" style="width:120px"></label>
-      <label>Cena za m³ z betonárky (Kč)<input type="number" min="0" step="10" value="${esc(o.beton.price)}" placeholder="${S.settings.betonPrice || 'zadej cenu'}" onchange="app.setBeton('price',this.value)" style="width:170px"></label>
+      <label>Množství (m³)<input type="number" min="0" step="0.01" value="${bc.manual ? esc(o.beton.m3) : ''}" placeholder="${bc.est}" onchange="app.setBeton('m3',this.value)" class="${bc.manual ? 'ovr' : ''}" style="width:120px"></label>
+      <label>Cena za m³ z betonárky (Kč)<input type="number" min="0" step="10" value="${esc(o.beton.price)}" placeholder="${S.settings.betonPrice || 'Kč/m³'}" onchange="app.setBeton('price',this.value)" style="width:170px"></label>
       <div class="betonsum">${bc.m3 > 0 ? `<b>${String(bc.m3).replace('.', ',')} m³ × ${kc(bc.unit)} = ${kc(bc.total)}</b>` : '<span class="muted">bez betonu</span>'}
         ${S.settings.markupBeton && bc.basePrice ? `<div class="small muted">vč. přirážky ${S.settings.markup} % (${kc(bc.basePrice)}/m³ bez přirážky)</div>` : ''}</div>
     </div>
-    <p class="small muted">Odhad podle položek: <b>${String(bc.est).replace('.', ',')} m³</b> (sloupky á 2,5 m, ~37 sloupků = 1 m³, betonový plot ~10 sloupků = 1 m³, patka posuvné brány 2–3 m³).
+    <p class="small muted">Odhad: <b>${bc.e.posts} sloupků × ${String(S.settings.betonPerPost).replace('.', ',')} m³</b>${bc.e.fixed ? ` + patky ${String(bc.e.fixed).replace('.', ',')} m³` : ''} = <b>${String(bc.est).replace('.', ',')} m³</b>.
       ${bc.manual ? '<a href="#" onclick="app.setBeton(\'m3\',\'\');return false">Vrátit odhad</a>' : 'Prázdné pole = použije se odhad, 0 = bez betonu.'}</p>
-    ${bc.m3 > 0 && !bc.basePrice ? '<p class="warn">⚠️ Chybí cena betonu – zadej ji tady nebo natrvalo v Nastavení.</p>' : ''}
+    ${bc.m3 > 0 && !bc.basePrice ? '<p class="warn">⚠️ Zadej cenu betonu za m³.</p>' : ''}
   </section>
 
   <section class="card">
@@ -434,8 +436,8 @@ function viewSettings() {
       ${N('kmRate', 'Doprava Kč/km')}
       ${N('kmMin', 'Minimální doprava (Kč)')}
       ${N('minWork', 'Minimální cena montáže (Kč, bez přirážky)')}
-      ${N('betonPrice', 'Výchozí cena betonu Kč/m³ (bez přirážky)', 10)}
-      ${N('betonStep', 'Zaokrouhlit odhad betonu nahoru na (m³)', 0.25)}
+      ${N('betonPerPost', 'Beton na 1 sloupek (m³)', 0.01)}
+      ${N('betonPrice', 'Výchozí cena betonu Kč/m³ (nepovinné)', 10)}
     </div>
     <label class="chk"><input type="checkbox" ${s.markupBeton ? 'checked' : ''} onchange="app.setS('markupBeton',this.checked)"> přirážka i na beton</label>
     <label class="chk"><input type="checkbox" ${s.markupTransport ? 'checked' : ''} onchange="app.setS('markupTransport',this.checked)"> přirážka i na dopravu</label>
