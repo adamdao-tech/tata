@@ -27,7 +27,7 @@ function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY)); } catch (e) { /* nic */ }
   d = d || {};
-  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 4;
+  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 5;
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}), supplier: { ...DEFAULT_SETTINGS.supplier, ...(d.settings?.supplier || {}) } };
   if (oldVer < 2) { d.settings.markupBeton = false; d.settings.settingsVersion = 2; } // beton bez přirážky
   if (oldVer < 3) { // přejmenování „Pletivo – …“ na „Čtyřhranné pletivo – …“
@@ -38,6 +38,12 @@ function load() {
     const defs = Object.fromEntries(DEFAULT_MATERIALS.map(m => [m.id, m]));
     (d.catalog || []).forEach(i => { const m = defs[i.id]; if (m && i.name === m.orig) { i.name = m.name; i.orig = m.orig; } });
     d.settings.settingsVersion = 4;
+  }
+  if (oldVer < 5) { // branky/brány: název podle výplně (ORION/UNIVERZAL = 2D panel)
+    const defs = Object.fromEntries(DEFAULT_MATERIALS.map(m => [m.id, m]));
+    const prev = /^(Branka zahradní|Brána dvoukřídlá) (GARDEN|ECO|ORION|UNIVERZAL) \(/;
+    (d.catalog || []).forEach(i => { const m = defs[i.id]; if (m && prev.test(i.name)) i.name = m.name; });
+    d.settings.settingsVersion = 5;
   }
   const cat = d.catalog || [];
   const ids = new Set(cat.map(i => i.id));

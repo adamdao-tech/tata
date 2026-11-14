@@ -146,15 +146,15 @@ const DEFAULT_MATERIALS = (() => {
   // --- Branky a brány ---
   const B = 'mat-brany';
   const HB = [1000, 1250, 1500, 1600, 1800, 2000];
-  R(B, h => `Branka GARDEN jednokřídlá ${h}×1000 mm`, 'ks', HB, [2334.72, 2410.72, 2615.16, 2733.72, 2952.60, 3182.88], h => `Branka zahradní GARDEN (pletivo), výška ${cm(h)} × šířka 100 cm`);
-  R(B, h => `Brána GARDEN dvoukřídlá ${h}×3600 mm`, 'ks', HB, [4981.04, 5443.12, 5649.08, 5755.48, 6197.04, 6719.92], h => `Brána dvoukřídlá GARDEN (pletivo), výška ${cm(h)} × šířka 360 cm`);
-  R(B, h => `Branka ECO jednokřídlá ${h}×1000 mm`, 'ks', HB, [2585.52, 2941.20, 3451.92, 3610.00, 3992.28, 4053.08], h => `Branka zahradní ECO (svař. rohož), výška ${cm(h)} × šířka 100 cm`);
-  R(B, h => `Brána ECO dvoukřídlá ${h}×3600 mm`, 'ks', HB, [5237.16, 5538.88, 6257.84, 6571.72, 7997.48, 8672.36], h => `Brána dvoukřídlá ECO (svař. rohož), výška ${cm(h)} × šířka 360 cm`);
+  R(B, h => `Branka GARDEN jednokřídlá ${h}×1000 mm`, 'ks', HB, [2334.72, 2410.72, 2615.16, 2733.72, 2952.60, 3182.88], h => `Branka jednokřídlá GARDEN – výplň pletivo, zelená, výška ${cm(h)} × šířka 100 cm`);
+  R(B, h => `Brána GARDEN dvoukřídlá ${h}×3600 mm`, 'ks', HB, [4981.04, 5443.12, 5649.08, 5755.48, 6197.04, 6719.92], h => `Brána dvoukřídlá GARDEN – výplň pletivo, zelená, výška ${cm(h)} × šířka 360 cm`);
+  R(B, h => `Branka ECO jednokřídlá ${h}×1000 mm`, 'ks', HB, [2585.52, 2941.20, 3451.92, 3610.00, 3992.28, 4053.08], h => `Branka jednokřídlá ECO – výplň svařovaná rohož, zelená/antracit, výška ${cm(h)} × šířka 100 cm`);
+  R(B, h => `Brána ECO dvoukřídlá ${h}×3600 mm`, 'ks', HB, [5237.16, 5538.88, 6257.84, 6571.72, 7997.48, 8672.36], h => `Brána dvoukřídlá ECO – výplň svařovaná rohož, zelená/antracit, výška ${cm(h)} × šířka 360 cm`);
   const HO = [1000, 1200, 1500, 1700, 2000];
-  R(B, h => `Branka ORION jednokřídlá ${h}×1000 mm`, 'ks', HO, [2991.36, 3087.12, 3553.00, 3917.04, 4674.76], h => `Branka zahradní ORION (panel), výška ${cm(h)} × šířka 100 cm`);
-  R(B, h => `Branka UNIVERZAL jednokřídlá ${h}×1000 mm`, 'ks', HO, [4774.32, 4774.32, 4949.88, 5671.12, 0], h => `Branka zahradní UNIVERZAL (panel, pozink+PVC), výška ${cm(h)} × šířka 100 cm`);
-  R(B, h => `Brána ORION dvoukřídlá ${h}×4000 mm`, 'ks', HO, [5474.28, 5854.28, 7530.08, 9104.80, 10724.36], h => `Brána dvoukřídlá ORION (panel), výška ${cm(h)} × šířka 400 cm`);
-  R(B, h => `Brána UNIVERZAL dvoukřídlá ${h}×4000 mm`, 'ks', HO, [10861.16, 11841.56, 14811.64, 16782.32, 0], h => `Brána dvoukřídlá UNIVERZAL (panel, pozink+PVC), výška ${cm(h)} × šířka 400 cm`);
+  R(B, h => `Branka ORION jednokřídlá ${h}×1000 mm`, 'ks', HO, [2991.36, 3087.12, 3553.00, 3917.04, 4674.76], h => `Branka jednokřídlá ORION – výplň 2D panel, zelená/antracit, výška ${cm(h)} × šířka 100 cm`);
+  R(B, h => `Branka UNIVERZAL jednokřídlá ${h}×1000 mm`, 'ks', HO, [4774.32, 4774.32, 4949.88, 5671.12, 0], h => `Branka jednokřídlá UNIVERZAL – výplň 2D panel, pozink + PVC, výška ${cm(h)} × šířka 100 cm`);
+  R(B, h => `Brána ORION dvoukřídlá ${h}×4000 mm`, 'ks', HO, [5474.28, 5854.28, 7530.08, 9104.80, 10724.36], h => `Brána dvoukřídlá ORION – výplň 2D panel, zelená/antracit, výška ${cm(h)} × šířka 400 cm`);
+  R(B, h => `Brána UNIVERZAL dvoukřídlá ${h}×4000 mm`, 'ks', HO, [10861.16, 11841.56, 14811.64, 16782.32, 0], h => `Brána dvoukřídlá UNIVERZAL – výplň 2D panel, pozink + PVC, výška ${cm(h)} × šířka 400 cm`);
   M(B, 'Automatika pro posuvnou bránu (pohon ROGER TW90, anténa…)', 'ks', 21883.44, 'Pohon pro posuvnou bránu ROGER TW90 (motor, anténa…)');
   M(B, 'Ozubená lišta k pohonu', 'm', 650.56, 'Ozubená hřebenová lišta k pohonu');
   M(B, 'Fotobuňky (set 2 ks)', 'ks', 956.84, 'Fotobuňky k pohonu (sada 2 ks)');

@@ -225,7 +225,7 @@ const DEFAULT_SETTINGS = {
   betonPrice: 0,         // výchozí Kč/m³ (nepovinné – cena se zadává u každé zakázky)
   markupBeton: false,    // přirážka na beton (táta ji nedává)
   matMarkup: 30,         // přirážka na materiál v %
-  settingsVersion: 4,
+  settingsVersion: 5,
   betonPerPost: 0.03,    // m³ betonu na 1 sloupek (10 sloupků = 0,3 m³)
   vatPayer: false,
   vatRate: 21,
