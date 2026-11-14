@@ -234,5 +234,5 @@ const DEFAULT_SETTINGS = {
   nextQuoteNo: 1,
   quoteValidDays: 30,
   quotePayment: 'Platba: 70 % předem na základě proforma faktury, 30 % při předání stavby.',
-  supplier: { name: '', address: '', ico: '', dic: '', bank: '', iban: '', phone: '', email: '', web: '' },
+  supplier: { name: '', address: '', ico: '', dic: '', bank: '', iban: '', phone: '', email: '' },
 };

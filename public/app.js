@@ -648,7 +648,7 @@ function viewSettings() {
   return `${bar}
   <section class="card"><h2>Dodavatel (táta)</h2>
     <div class="grid">${SF('name', 'Jméno / firma')}${SF('address', 'Adresa')}${SF('ico', 'IČO')}${SF('dic', 'DIČ')}
-    ${SF('bank', 'Číslo účtu')}${SF('iban', 'IBAN')}${SF('phone', 'Telefon')}${SF('email', 'E-mail')}${SF('web', 'Web')}</div>
+    ${SF('bank', 'Číslo účtu')}${SF('iban', 'IBAN')}${SF('phone', 'Telefon')}${SF('email', 'E-mail')}</div>
   </section>
   <section class="card"><h2>Výpočet</h2>
     <div class="grid">
