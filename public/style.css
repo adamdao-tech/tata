@@ -79,8 +79,10 @@ tr.overdue td { background: #fdf0ed; }
 @media print {
   body { background: #fff; }
   header, main, #toast { display: none !important; }
-  #print { display: block; }
-  @page { margin: 14mm; }
+  #print { display: block; padding: 14mm 14mm 10mm; }
+  /* nulový okraj stránky = prohlížeč netiskne záhlaví/zápatí (název, datum, adresu webu) */
+  @page { size: A4; margin: 0; }
+  .doc { max-width: none; }
 }
 .betonsum { align-self: flex-end; padding: 6px 4px; }
 .warn { color: var(--warn); font-weight: 600; margin: 6px 0 0; }

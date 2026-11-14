@@ -760,9 +760,11 @@ function docHTML(kind, d) {
 // starší nabídky pole nemají → použij výchozí text z Nastavení
 function quotePayment(d) { return d.payment !== undefined ? d.payment : (S.settings.quotePayment || ''); }
 
-function doPrint(html) {
+function doPrint(html, title) {
   $('#print').innerHTML = html;
-  setTimeout(() => window.print(), 50);
+  const prev = document.title;
+  if (title) document.title = title; // podle titulku se jmenuje uložené PDF
+  setTimeout(() => { window.print(); document.title = prev; }, 50);
 }
 
 function orderLines(o) {
@@ -902,7 +904,11 @@ const app = {
 
   // doklady (nabídka i faktura)
   editDoc(kind, id) { editKind = kind; editId = id; tab = 'doklad'; render(); window.scrollTo(0, 0); },
-  printDoc(kind, id) { const d = (kind === 'quote' ? S.quotes : S.invoices).find(x => x.id === id); doPrint(docHTML(kind, d)); },
+  printDoc(kind, id) {
+    const d = (kind === 'quote' ? S.quotes : S.invoices).find(x => x.id === id);
+    const who = (d.customer && d.customer.name) ? ' - ' + d.customer.name : '';
+    doPrint(docHTML(kind, d), (kind === 'quote' ? 'Cenova nabidka ' : 'Faktura ') + d.number + who);
+  },
   setDoc(path, v) { setPath(curDoc(), path, v); save(); render(); },
   setDocLine(k, f, v) { curDoc().lines[k][f] = (f === 'qty' || f === 'price') ? num(v) : v; save(); render(); },
   addDocLine() { curDoc().lines.push({ name: '', unit: 'ks', qty: 1, price: 0, group: 'prace' }); save(); render(); },
