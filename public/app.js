@@ -15,7 +15,7 @@ const catName = id => (CATS.find(c => c[0] === id) || [, id])[1];
 const KEY = 'tata-ploty-v1';
 
 function newOrder() {
-  return { id: uid(), name: '', date: today(), place: '', km: 0, note: '',
+  return { id: uid(), name: '', date: today(), place: '', km: 0, note: '', beton: { m3: '', price: '' },
     customer: { name: '', address: '', phone: '', email: '', ico: '', dic: '' }, lines: [] };
 }
 
@@ -27,7 +27,7 @@ function load() {
   const cat = d.catalog || [];
   const ids = new Set(cat.map(i => i.id));
   for (const i of DEFAULT_CATALOG) if (!ids.has(i.id)) cat.push(JSON.parse(JSON.stringify(i)));
-  d.catalog = cat;
+  d.catalog = cat.filter(i => i.id !== 'beton-m3'); // beton je teď samostatná sekce zakázky
   d.orders = d.orders || [];
   d.invoices = d.invoices || [];
   d.current = d.current || newOrder();
@@ -64,7 +64,35 @@ function lineCalc(l) {
 function lineName(l) {
   if (l.name) return l.name;
   const it = l.itemId && item(l.itemId);
-  return it ? it.name : '(položka smazána z ceníku)';
+  const n = it ? it.name : '(položka smazána z ceníku)';
+  return l.height ? `${n}, výška ${l.height} cm` : n;
+}
+
+// ---------- beton ----------
+const FENCE_BY_ITEM = {};
+for (const ft of Object.values(FENCE_TYPES)) for (const [, id] of ft.variants) FENCE_BY_ITEM[id] = ft;
+
+function betonEstimate(o) {
+  let m3 = 0;
+  for (const l of o.lines) {
+    const q = num(l.qty);
+    if (!l.itemId || !q || NO_BETON.includes(l.itemId)) continue;
+    const ft = FENCE_BY_ITEM[l.itemId];
+    if (ft) m3 += (Math.ceil(q / ft.spacing) + 1) / ft.perM3; // sloupky = pole + 1
+    else if (BETON_PER_ITEM[l.itemId]) m3 += BETON_PER_ITEM[l.itemId] * q;
+  }
+  const step = num(S.settings.betonStep) || 0.5;
+  return m3 > 0 ? Math.ceil(m3 / step - 1e-9) * step : 0;
+}
+
+function betonCalc(o) {
+  const b = o.beton || { m3: '', price: '' };
+  const est = betonEstimate(o);
+  const manual = b.m3 !== '' && b.m3 !== null && b.m3 !== undefined;
+  const m3 = manual ? num(b.m3) : est;
+  const basePrice = b.price !== '' && b.price !== null && b.price !== undefined ? num(b.price) : num(S.settings.betonPrice);
+  const unit = S.settings.markupBeton ? Math.round(basePrice * mk()) : basePrice;
+  return { est, manual, m3, basePrice, unit, total: Math.round(m3 * unit) };
 }
 
 // Vrátí všechny řádky zakázky v konečné podobě (pro tabulku, nabídku i fakturu)
@@ -85,6 +113,8 @@ function orderRows(o) {
     const m = Math.round(num(s.minWork) * mk());
     if (work < m) extra.push({ name: 'Doplatek do minimální ceny montáže', unit: 'ks', qty: 1, price: m - work, total: m - work, auto: true });
   }
+  const bc = betonCalc(o);
+  if (bc.m3 > 0) extra.push({ name: 'Beton', unit: 'm³', qty: bc.m3, price: bc.unit, total: bc.total, auto: true });
   const km = num(o.km);
   if (km > 0) {
     let t = Math.max(km * num(s.kmRate), num(s.kmMin));
@@ -124,6 +154,8 @@ function viewOrder() {
   const c = o.customer;
   const { rows, extra, all } = orderRows(o);
   const t = totals(all, S.settings.vatPayer, S.settings.vatRate);
+  const bc = betonCalc(o);
+  if (!o.beton) o.beton = { m3: '', price: '' };
   const saved = S.orders.some(x => x.id === o.id);
   const fenceOpts = Object.entries(FENCE_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
   const gateOpts = Object.entries(GATE_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
@@ -155,6 +187,7 @@ function viewOrder() {
     <div class="row wrap">
       <select id="fType" onchange="app.fillFenceVariants()">${fenceOpts}</select>
       <select id="fVar">${fenceVariantOpts('pletivo')}</select>
+      <span id="fHeightWrap">${heightOpts('pletivo')}</span>
       <input id="fLen" type="number" min="0" step="0.5" placeholder="délka v m" style="width:120px">
       <button onclick="app.addFence()">Přidat</button>
     </div>
@@ -173,6 +206,20 @@ function viewOrder() {
       <button onclick="app.addFromCat()">Přidat</button>
       <button class="ghost" onclick="app.addCustom()">+ Vlastní řádek</button>
     </div>
+  </section>
+
+
+  <section class="card">
+    <h3>🪨 Beton</h3>
+    <div class="row wrap">
+      <label>Množství (m³)<input type="number" min="0" step="0.25" value="${bc.manual ? esc(o.beton.m3) : ''}" placeholder="${bc.est}" onchange="app.setBeton('m3',this.value)" class="${bc.manual ? 'ovr' : ''}" style="width:120px"></label>
+      <label>Cena za m³ z betonárky (Kč)<input type="number" min="0" step="10" value="${esc(o.beton.price)}" placeholder="${S.settings.betonPrice || 'zadej cenu'}" onchange="app.setBeton('price',this.value)" style="width:170px"></label>
+      <div class="betonsum">${bc.m3 > 0 ? `<b>${String(bc.m3).replace('.', ',')} m³ × ${kc(bc.unit)} = ${kc(bc.total)}</b>` : '<span class="muted">bez betonu</span>'}
+        ${S.settings.markupBeton && bc.basePrice ? `<div class="small muted">vč. přirážky ${S.settings.markup} % (${kc(bc.basePrice)}/m³ bez přirážky)</div>` : ''}</div>
+    </div>
+    <p class="small muted">Odhad podle položek: <b>${String(bc.est).replace('.', ',')} m³</b> (sloupky á 2,5 m, ~37 sloupků = 1 m³, betonový plot ~10 sloupků = 1 m³, patka posuvné brány 2–3 m³).
+      ${bc.manual ? '<a href="#" onclick="app.setBeton(\'m3\',\'\');return false">Vrátit odhad</a>' : 'Prázdné pole = použije se odhad, 0 = bez betonu.'}</p>
+    ${bc.m3 > 0 && !bc.basePrice ? '<p class="warn">⚠️ Chybí cena betonu – zadej ji tady nebo natrvalo v Nastavení.</p>' : ''}
   </section>
 
   <section class="card">
@@ -221,6 +268,13 @@ function fenceVariantOpts(type) {
     const p = it ? ` – ${finalPrice(it, 'A')}/${finalPrice(it, 'B')}/${finalPrice(it, 'C')} Kč/m` : '';
     return `<option value="${id}">${esc(lab + p)}</option>`;
   }).join('');
+}
+function heightOpts(type) {
+  const hs = FENCE_TYPES[type].heights || [];
+  if (!hs.length) return '';
+  return `<select id="fHeight" onchange="app.heightChanged()" title="Výška plotu">
+    <option value="">výška…</option>${hs.map(h => `<option value="${h}">${h} cm</option>`).join('')}<option value="jina">jiná…</option></select>
+    <input id="fHeightCustom" type="number" min="0" placeholder="cm" style="width:80px;display:none">`;
 }
 function gateOptsHtml(type) {
   const g = GATE_TYPES[type];
@@ -380,7 +434,10 @@ function viewSettings() {
       ${N('kmRate', 'Doprava Kč/km')}
       ${N('kmMin', 'Minimální doprava (Kč)')}
       ${N('minWork', 'Minimální cena montáže (Kč, bez přirážky)')}
+      ${N('betonPrice', 'Výchozí cena betonu Kč/m³ (bez přirážky)', 10)}
+      ${N('betonStep', 'Zaokrouhlit odhad betonu nahoru na (m³)', 0.25)}
     </div>
+    <label class="chk"><input type="checkbox" ${s.markupBeton ? 'checked' : ''} onchange="app.setS('markupBeton',this.checked)"> přirážka i na beton</label>
     <label class="chk"><input type="checkbox" ${s.markupTransport ? 'checked' : ''} onchange="app.setS('markupTransport',this.checked)"> přirážka i na dopravu</label>
     <label class="chk"><input type="checkbox" ${s.minWorkOn ? 'checked' : ''} onchange="app.setS('minWorkOn',this.checked)"> hlídat minimální cenu montáže</label>
   </section>
@@ -469,11 +526,19 @@ const app = {
   copyOrder(id) { const o = S.orders.find(x => x.id === id); if (!o) return; const c = JSON.parse(JSON.stringify(o)); c.id = uid(); c.name = (c.name || '') + ' (kopie)'; c.date = today(); S.current = c; save(); go('zakazka'); },
   delOrder(id) { if (!confirm('Smazat zakázku?')) return; S.orders = S.orders.filter(x => x.id !== id); save(); render(); },
   addLine(itemId, qty, extra = {}) { S.current.lines.push({ id: uid(), itemId, qty: num(qty) || 1, tier: 'auto', price: '', ...extra }); },
-  fillFenceVariants() { $('#fVar').innerHTML = fenceVariantOpts($('#fType').value); },
+  fillFenceVariants() { const t = $('#fType').value; $('#fVar').innerHTML = fenceVariantOpts(t); $('#fHeightWrap').innerHTML = heightOpts(t); },
+  heightChanged() { const c = $('#fHeightCustom'); c.style.display = $('#fHeight').value === 'jina' ? '' : 'none'; if ($('#fHeight').value === 'jina') c.focus(); },
   addFence() {
     const len = num($('#fLen').value);
     if (!len) { alert('Zadej délku plotu v metrech.'); $('#fLen').focus(); return; }
-    app.addLine($('#fVar').value, len); save(); render();
+    const hSel = $('#fHeight');
+    let height = '';
+    if (hSel) height = hSel.value === 'jina' ? num($('#fHeightCustom').value) || '' : hSel.value;
+    app.addLine($('#fVar').value, len, height ? { height } : {}); save(); render();
+  },
+  setBeton(k, v) {
+    if (!S.current.beton) S.current.beton = { m3: '', price: '' };
+    S.current.beton[k] = v === '' ? '' : num(v); save(); render();
   },
   gateChanged() { $('#gOpts').innerHTML = gateOptsHtml($('#gType').value); },
   addGate() {
