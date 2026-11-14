@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kalkulace plotů a faktury</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🧱 Ploty – kalkulace</div>
+  <nav>
+    <button data-tab="zakazka">Zakázka</button>
+    <button data-tab="zakazky">Uložené</button>
+    <button data-tab="faktury">Faktury</button>
+    <button data-tab="cenik">Ceník</button>
+    <button data-tab="nastaveni">Nastavení</button>
+  </nav>
+</header>
+<main id="view"></main>
+<div id="print"></div>
+<div id="toast"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
