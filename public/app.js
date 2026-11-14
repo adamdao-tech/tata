@@ -27,12 +27,17 @@ function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(KEY)); } catch (e) { /* nic */ }
   d = d || {};
-  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 3;
+  const oldVer = d.settings ? (d.settings.settingsVersion || 1) : 4;
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}), supplier: { ...DEFAULT_SETTINGS.supplier, ...(d.settings?.supplier || {}) } };
   if (oldVer < 2) { d.settings.markupBeton = false; d.settings.settingsVersion = 2; } // beton bez přirážky
   if (oldVer < 3) { // přejmenování „Pletivo – …“ na „Čtyřhranné pletivo – …“
     (d.catalog || []).forEach(i => { if (i.cat === 'pletivo' && /^Pletivo – /.test(i.name)) i.name = i.name.replace(/^Pletivo – /, 'Čtyřhranné pletivo – '); });
     d.settings.settingsVersion = 3;
+  }
+  if (oldVer < 4) { // srozumitelné názvy materiálu (jako na e-shopu) – jen u položek, které nikdo nepřejmenoval
+    const defs = Object.fromEntries(DEFAULT_MATERIALS.map(m => [m.id, m]));
+    (d.catalog || []).forEach(i => { const m = defs[i.id]; if (m && i.name === m.orig) { i.name = m.name; i.orig = m.orig; } });
+    d.settings.settingsVersion = 4;
   }
   const cat = d.catalog || [];
   const ids = new Set(cat.map(i => i.id));
@@ -423,7 +428,8 @@ function gateOptsHtml(type) {
 function matItemOpts(cat, q) {
   const words = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean);
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const list = S.catalog.filter(i => isMat(i) && (words.length ? words.every(w => norm(i.name).includes(w)) : i.cat === cat));
+  const hay = i => norm(i.name + ' ' + (i.orig || ''));  // hledá i podle původního názvu z ceníku RETIC
+  const list = S.catalog.filter(i => isMat(i) && (words.length ? words.every(w => hay(i).includes(w)) : i.cat === cat));
   if (!list.length) return '<option value="">nic nenalezeno</option>';
   return list.slice(0, 300).map(i => `<option value="${i.id}">${esc(i.name)} – ${kc(finalPrice(i))}/${esc(i.unit)}</option>`).join('');
 }
@@ -591,7 +597,7 @@ function setPath(o, p, v) { const ks = p.split('.'); const last = ks.pop(); ks.r
 function viewCatalog() {
   const f = catFilter.toLowerCase();
   const groups = ALL_CATS.filter(([cat]) => catGroup === 'all' || (catGroup === 'mat') === cat.startsWith('mat-')).map(([cat, name]) => {
-    const items = S.catalog.filter(i => i.cat === cat && (!f || i.name.toLowerCase().includes(f)));
+    const items = S.catalog.filter(i => i.cat === cat && (!f || (i.name + ' ' + (i.orig || '')).toLowerCase().includes(f)));
     if (cat === 'vlastni' && catGroup === 'mat') return '';
     if (!items.length && (f || cat !== 'vlastni')) return '';
     return `<section class="card"><h3>${esc(name)}</h3><div class="tablewrap"><table class="cat">
