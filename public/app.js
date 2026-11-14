@@ -235,8 +235,15 @@ let tab = 'zakazka';
 let editKind = null, editId = null;
 let catFilter = '';
 let catGroup = 'work';
+let setDraft = null; // rozpracované změny nastavení (null = zamčeno)
 
-function go(t) { tab = t; render(); window.scrollTo(0, 0); }
+function go(t) {
+  if (setDraft && t !== 'nastaveni') {
+    if (JSON.stringify(setDraft) !== JSON.stringify(S.settings) && !confirm('Máš neuložené změny v nastavení. Zahodit je?')) return;
+    setDraft = null;
+  }
+  tab = t; render(); window.scrollTo(0, 0);
+}
 
 function render() {
   const navTab = tab === 'doklad' ? (editKind === 'quote' ? 'nabidky' : 'faktury') : tab;
@@ -619,10 +626,15 @@ function viewCatalog() {
 
 // ---------- NASTAVENÍ ----------
 function viewSettings() {
-  const s = S.settings, p = s.supplier;
-  const SF = (k, label) => `<label>${label}<input value="${esc(p[k])}" onchange="app.setSup('${k}',this.value)"></label>`;
-  const N = (k, label, step = 1) => `<label>${label}<input type="number" step="${step}" value="${esc(s[k])}" onchange="app.setS('${k}',this.value,true)"></label>`;
-  return `
+  const ed = !!setDraft, s = setDraft || S.settings, p = s.supplier, dis = ed ? '' : 'disabled';
+  const SF = (k, label) => `<label>${label}<input ${dis} value="${esc(p[k])}" onchange="app.setSup('${k}',this.value)"></label>`;
+  const N = (k, label, step = 1) => `<label>${label}<input ${dis} type="number" step="${step}" value="${esc(s[k])}" onchange="app.setS('${k}',this.value,true)"></label>`;
+  const C = (k, label) => `<label class="chk"><input ${dis} type="checkbox" ${s[k] ? 'checked' : ''} onchange="app.setS('${k}',this.checked)"> ${label}</label>`;
+  const bar = ed
+    ? `<div class="setbar editing"><span>✏️ Upravuješ nastavení – změny se projeví až po uložení.</span><span class="row"><button onclick="app.saveSettings()">💾 Uložit</button><button class="ghost" onclick="app.cancelSettings()">Zrušit</button></span></div>`
+    : `<div class="setbar"><span>🔒 Nastavení je uložené a zamčené, aby se omylem nezměnilo.</span><button onclick="app.editSettings()">✏️ Upravit nastavení</button></div>`;
+  const warnDic = s.vatPayer && !p.dic ? '<p class="warn">⚠️ Je zaškrtnutý plátce DPH, ale chybí DIČ. Pokud táta plátce není, odškrtni to.</p>' : '';
+  return `${bar}
   <section class="card"><h2>Dodavatel (táta)</h2>
     <div class="grid">${SF('name', 'Jméno / firma')}${SF('address', 'Adresa')}${SF('ico', 'IČO')}${SF('dic', 'DIČ')}
     ${SF('bank', 'Číslo účtu')}${SF('iban', 'IBAN')}${SF('phone', 'Telefon')}${SF('email', 'E-mail')}${SF('web', 'Web')}</div>
@@ -637,9 +649,7 @@ function viewSettings() {
       ${N('betonPerPost', 'Beton na 1 sloupek (m³)', 0.01)}
       ${N('betonPrice', 'Výchozí cena betonu Kč/m³ (nepovinné)', 10)}
     </div>
-    <label class="chk"><input type="checkbox" ${s.markupBeton ? 'checked' : ''} onchange="app.setS('markupBeton',this.checked)"> přirážka i na beton</label>
-    <label class="chk"><input type="checkbox" ${s.markupTransport ? 'checked' : ''} onchange="app.setS('markupTransport',this.checked)"> přirážka i na dopravu</label>
-    <label class="chk"><input type="checkbox" ${s.minWorkOn ? 'checked' : ''} onchange="app.setS('minWorkOn',this.checked)"> hlídat minimální cenu montáže</label>
+    ${C('markupBeton', 'přirážka i na beton')}${C('markupTransport', 'přirážka i na dopravu')}${C('minWorkOn', 'hlídat minimální cenu montáže')}
   </section>
   <section class="card"><h2>Faktury</h2>
     <div class="grid">
@@ -649,10 +659,10 @@ function viewSettings() {
       ${N('quoteValidDays', 'Platnost nabídky (dní)')}
       ${N('vatRate', 'Sazba DPH (%)')}
     </div>
-    <label class="chk"><input type="checkbox" ${s.vatPayer ? 'checked' : ''} onchange="app.setS('vatPayer',this.checked)"> jsem plátce DPH</label>
+    ${C('vatPayer', 'jsem plátce DPH')}${warnDic}
     <p class="muted small">Další faktura dostane číslo <b>${nextInvNumber()}</b>, další nabídka <b>${nextQuoteNumber()}</b>.
-    QR platba se na fakturu přidá sama, když je vyplněné číslo účtu nebo IBAN${ibanFor(S.settings.supplier) ? ` (IBAN: ${esc(ibanFor(S.settings.supplier))})` : ''}.</p>
-  </section>
+    QR platba se na fakturu přidá sama, když je vyplněné číslo účtu nebo IBAN${ibanFor(p) ? ` (IBAN: ${esc(ibanFor(p))})` : ''}.</p>
+  </section>${ed ? bar : ''}
   <section class="card"><h2>Ukládání a záloha</h2>
     <p class="muted small">${syncText()}</p>
     ${API ? '<p><button class="ghost" onclick="app.logout()">Změnit heslo / odhlásit</button></p>' : ''}
@@ -922,8 +932,11 @@ const app = {
   },
 
   // nastavení
-  setS(k, v, isNum) { S.settings[k] = isNum ? num(v) : v; save(); render(); },
-  setSup(k, v) { S.settings.supplier[k] = v; save(); },
+  setS(k, v, isNum) { if (!setDraft) return; setDraft[k] = isNum ? num(v) : v; render(); },
+  setSup(k, v) { if (!setDraft) return; setDraft.supplier[k] = v; },
+  editSettings() { setDraft = JSON.parse(JSON.stringify(S.settings)); render(); },
+  cancelSettings() { setDraft = null; render(); },
+  saveSettings() { S.settings = setDraft; setDraft = null; save(); render(); toast('Nastavení uloženo'); },
   logout() { localStorage.removeItem(PW_KEY); location.reload(); },
   exportData() {
     const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
