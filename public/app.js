@@ -36,14 +36,99 @@ function load() {
   d.catalog = cat.filter(i => i.id !== 'beton-m3'); // beton je teď samostatná sekce zakázky
   d.orders = d.orders || [];
   d.invoices = d.invoices || [];
+  d.quotes = d.quotes || [];
   d.current = d.current || newOrder();
   return d;
 }
 let S = load();
 function save() {
+  S._updated = Date.now();
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
   catch (e) { alert('Nepodařilo se uložit data: ' + e.message); }
+  schedulePush();
 }
+
+// ---------- ukládání na server (Cloudflare Worker + D1) ----------
+const API = /^https?:$/.test(location.protocol) ? '/api/data' : null;
+const PW_KEY = 'tata-pw', BASE_KEY = 'tata-base';
+const SYNC_KEYS = ['settings', 'catalog', 'orders', 'quotes', 'invoices', 'current'];
+const sync = { state: API ? 'connecting' : 'local', msg: '', timer: null, busy: false };
+const getBase = () => Number(localStorage.getItem(BASE_KEY)) || 0;
+const setBase = v => localStorage.setItem(BASE_KEY, String(v));
+const dirty = () => (S._updated || 0) > getBase();
+
+function setSync(state, msg = '') {
+  sync.state = state; sync.msg = msg;
+  const el = $('#sync'); if (!el) return;
+  const t = { local: '💾 jen v prohlížeči', connecting: '⏳ připojuji…', saving: '⏳ ukládám…', ok: '☁️ uloženo', error: '⚠️ neuloženo na server', offline: '⚠️ offline' }[state];
+  el.textContent = t; el.title = msg || ''; el.className = 'sync s-' + state;
+}
+function syncText() {
+  if (!API) return 'Stránka je otevřená ze souboru – data se ukládají jen v tomhle prohlížeči. Po nasazení na Cloudflare se ukládají na server.';
+  if (sync.state === 'local') return 'Server nemá úložiště (API nenalezeno) – data jsou jen v tomhle prohlížeči.';
+  return 'Data se ukládají na server, takže jsou stejná na každém zařízení. Stav: ' + ($('#sync') ? $('#sync').textContent : '') + (sync.msg ? ' – ' + esc(sync.msg) : '') + '. Záloha do souboru se ale hodí i tak.';
+}
+async function apiCall(method, body) {
+  return fetch(API, { method, headers: { 'content-type': 'application/json', 'x-password': localStorage.getItem(PW_KEY) || '' },
+    body: body ? JSON.stringify(body) : undefined });
+}
+function askPassword(wrong) {
+  const p = prompt((wrong ? 'Špatné heslo. ' : '') + 'Zadej heslo k aplikaci:');
+  if (p === null) return false;
+  localStorage.setItem(PW_KEY, p); return true;
+}
+function applyServer(data, updated) {
+  const d = { ...data, _updated: updated };
+  localStorage.setItem(KEY, JSON.stringify(d)); setBase(updated);
+  S = load(); render();
+}
+async function resolveConflict(serverData, serverUpdated) {
+  if (confirm('Na serveru jsou novější data (z jiného zařízení).\n\nOK = načíst data ze serveru (změny z tohoto zařízení od posledního uložení se zahodí)\nZrušit = přepsat server daty z tohoto zařízení')) {
+    applyServer(serverData, serverUpdated); setSync('ok');
+  } else await push(true);
+}
+async function pull(wrong) {
+  if (!API) return setSync('local');
+  try {
+    const r = await apiCall('GET');
+    if (r.status === 401) { if (askPassword(wrong || !!localStorage.getItem(PW_KEY))) return pull(true); return setSync('error', 'nepřihlášeno'); }
+    if (r.status === 404 || r.status === 405) return setSync('local');
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return setSync('error', j.error || ('HTTP ' + r.status));
+    if (!j.data || !j.updated) { setBase(0); return push(true); }      // prázdný server → nahraj místní data
+    if (j.updated === getBase()) { if (dirty()) return push(); return setSync('ok'); }
+    if (!dirty()) { applyServer(j.data, j.updated); return setSync('ok'); }
+    await resolveConflict(j.data, j.updated);
+  } catch (e) { setSync('offline', String(e.message || e)); }
+}
+function schedulePush() {
+  if (!API || sync.state === 'local') return;
+  clearTimeout(sync.timer); setSync('saving');
+  sync.timer = setTimeout(() => push(), 800);
+}
+async function push(force) {
+  if (!API) return;
+  if (sync.busy) { clearTimeout(sync.timer); sync.timer = setTimeout(() => push(force), 500); return; }
+  sync.busy = true;
+  try {
+    if (!S._updated) S._updated = Date.now();
+    const data = {}; SYNC_KEYS.forEach(k => { data[k] = S[k]; });
+    const r = await apiCall('PUT', { data, updated: S._updated, base: getBase(), force: !!force });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { sync.busy = false; if (askPassword(true)) return push(force); return setSync('error', 'nepřihlášeno'); }
+    if (r.status === 409) {
+      sync.busy = false;
+      const g = await apiCall('GET'); const gj = await g.json();
+      return resolveConflict(gj.data, gj.updated);
+    }
+    if (!r.ok) return setSync('error', j.error || ('HTTP ' + r.status));
+    setBase(j.updated); setSync(dirty() ? 'saving' : 'ok');
+  } catch (e) { setSync('offline', String(e.message || e)); }
+  finally { sync.busy = false; }
+}
+// Když se vrátíš na stránku (třeba z mobilu), načti změny z jiných zařízení
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && API && !sync.busy && !dirty()) pull(); });
+window.addEventListener('online', () => pull());
 
 // ---------- výpočty ----------
 const item = id => S.catalog.find(i => i.id === id);
@@ -147,19 +232,21 @@ function totals(rows, vatPayer, vatRate) {
 
 // ---------- navigace ----------
 let tab = 'zakazka';
-let editInvoiceId = null;
+let editKind = null, editId = null;
 let catFilter = '';
 let catGroup = 'work';
 
-function go(t) { tab = t; if (t !== 'faktura') editInvoiceId = null; render(); window.scrollTo(0, 0); }
+function go(t) { tab = t; render(); window.scrollTo(0, 0); }
 
 function render() {
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab || (tab === 'faktura' && b.dataset.tab === 'faktury')));
+  const navTab = tab === 'doklad' ? (editKind === 'quote' ? 'nabidky' : 'faktury') : tab;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
   const v = $('#view');
   if (tab === 'zakazka') v.innerHTML = viewOrder();
   else if (tab === 'zakazky') v.innerHTML = viewOrders();
+  else if (tab === 'nabidky') v.innerHTML = viewQuotes();
   else if (tab === 'faktury') v.innerHTML = viewInvoices();
-  else if (tab === 'faktura') v.innerHTML = viewInvoice();
+  else if (tab === 'doklad') { const h = viewDocEditor(); if (typeof h === 'string') v.innerHTML = h; }
   else if (tab === 'cenik') v.innerHTML = viewCatalog();
   else if (tab === 'nastaveni') v.innerHTML = viewSettings();
 }
@@ -265,11 +352,18 @@ function viewOrder() {
       <div class="muted small">Práce +${S.settings.markup} %, materiál +${S.settings.matMarkup} %${S.settings.markupBeton ? ', beton +' + S.settings.markup + ' %' : ', beton bez přirážky'}. ${S.settings.vatPayer ? '' : 'Neplátce DPH.'}</div>
     </div>
     <label>Poznámka<textarea onchange="app.setO('note',this.value)" rows="2">${esc(o.note)}</textarea></label>
-    <div class="row wrap">
-      <button onclick="app.invoiceFromOrder()">🧾 Vytvořit fakturu</button>
-      <button class="ghost" onclick="app.printQuote()">🖨️ Tisk cenové nabídky</button>
-    </div>
+    <div class="row wrap">${orderQuoteButtons(o)}</div>
   </section>`;
+}
+
+function orderQuoteButtons(o) {
+  const q = o.quoteId && S.quotes.find(x => x.id === o.quoteId);
+  if (!q) return `<button onclick="app.quoteFromOrder()">📄 Vytvořit cenovou nabídku</button>`;
+  if (q.status === 'vyfakturovana') return `<span class="muted">Nabídka ${esc(q.number)} je už vyfakturovaná.</span>
+    <button class="ghost" onclick="app.editDoc('quote','${q.id}')">Otevřít nabídku</button>
+    <button onclick="app.quoteFromOrder(true)">📄 Nová cenová nabídka</button>`;
+  return `<button onclick="app.updateQuote()">🔄 Aktualizovat nabídku ${esc(q.number)}</button>
+    <button class="ghost" onclick="app.editDoc('quote','${q.id}')">Otevřít nabídku ${badge(q.status)}</button>`;
 }
 
 function lineRow(r) {
@@ -341,76 +435,141 @@ function viewOrders() {
     </tbody></table></div></section>`;
 }
 
-// ---------- FAKTURY ----------
-function invTotals(inv) { return totals(inv.lines, inv.vatPayer, inv.vatRate); }
+// ---------- NABÍDKY A FAKTURY ----------
+const QSTATUS = { koncept: 'Koncept', odeslana: 'Odeslaná', potvrzena: 'Potvrzená', zamitnuta: 'Zamítnutá', vyfakturovana: 'Vyfakturovaná' };
+const GROUPS = { prace: 'Práce a montáž', material: 'Materiál', ostatni: 'Beton a doprava' };
+const docTotals = d => totals(d.lines, d.vatPayer, d.vatRate);
+const isOverdue = i => !i.paid && i.due && i.due < today();
+const badge = st => `<span class="badge st-${st}">${QSTATUS[st] || st}</span>`;
+let invFilter = { year: String(new Date().getFullYear()), status: 'all' };
+let quoteFilter = 'all';
 
-function viewInvoices() {
-  const list = [...S.invoices].sort((a, b) => String(b.number).localeCompare(String(a.number)));
-  return `<section class="card"><div class="row between"><h2>Faktury</h2><button onclick="app.newInvoice()">+ Prázdná faktura</button></div>
-  ${list.length ? `<div class="tablewrap"><table>
-    <thead><tr><th>Číslo</th><th>Odběratel</th><th>Vystaveno</th><th>Splatnost</th><th class="r">Celkem</th><th>Zaplaceno</th><th></th></tr></thead><tbody>
-    ${list.map(i => `<tr class="${!i.paid && i.due < today() ? 'overdue' : ''}">
-      <td><b>${esc(i.number)}</b></td><td>${esc(i.customer.name)}</td><td>${fmtDate(i.issued)}</td><td>${fmtDate(i.due)}</td>
-      <td class="r">${kc(invTotals(i).total)}</td>
-      <td><input type="checkbox" ${i.paid ? 'checked' : ''} onchange="app.setPaid('${i.id}',this.checked)"></td>
-      <td class="nowrap"><button onclick="app.editInvoice('${i.id}')">Upravit</button>
-      <button class="ghost" onclick="app.printInvoice('${i.id}')">🖨️</button>
-      <button class="x" onclick="app.delInvoice('${i.id}')">✕</button></td></tr>`).join('')}
-    </tbody></table></div>` : '<p class="muted">Zatím žádné faktury. Vytvoř ji ze zakázky tlačítkem „Vytvořit fakturu“.</p>'}
+function viewQuotes() {
+  const all = [...S.quotes].sort((a, b) => String(b.number).localeCompare(String(a.number)));
+  const list = all.filter(q => quoteFilter === 'all' || (quoteFilter === 'open' ? ['koncept', 'odeslana', 'potvrzena'].includes(q.status) : q.status === quoteFilter));
+  const cnt = st => all.filter(q => q.status === st).length;
+  return `<section class="card"><div class="row between wrap"><h2>Cenové nabídky</h2>
+    <div class="row wrap"><select onchange="app.setQuoteFilter(this.value)">
+      ${[['open', 'Rozpracované'], ['all', 'Všechny'], ...Object.entries(QSTATUS)].map(([k, n]) => `<option value="${k}" ${quoteFilter === k ? 'selected' : ''}>${n}</option>`).join('')}
+    </select><button class="ghost" onclick="app.newQuote()">+ Prázdná nabídka</button></div></div>
+    <div class="stats">
+      <div><span>Koncept</span><b>${cnt('koncept')}</b></div><div><span>Odeslané</span><b>${cnt('odeslana')}</b></div>
+      <div><span>Potvrzené</span><b>${cnt('potvrzena')}</b></div><div><span>Vyfakturované</span><b>${cnt('vyfakturovana')}</b></div>
+    </div>
+    <p class="muted small">Nabídka se vytvoří ze zakázky tlačítkem „Vytvořit cenovou nabídku“. Po potvrzení zákazníkem z ní uděláš fakturu.</p>
+    ${list.length ? `<div class="tablewrap"><table>
+      <thead><tr><th>Číslo</th><th>Zakázka</th><th>Zákazník</th><th>Datum</th><th>Platnost</th><th class="r">Celkem</th><th>Stav</th><th></th></tr></thead><tbody>
+      ${list.map(q => `<tr>
+        <td><b>${esc(q.number)}</b></td><td>${esc(q.name)}</td><td>${esc(q.customer.name)}</td><td>${fmtDate(q.date)}</td>
+        <td class="${['koncept', 'odeslana'].includes(q.status) && q.validUntil < today() ? 'late' : ''}">${fmtDate(q.validUntil)}</td>
+        <td class="r">${kc(docTotals(q).total)}</td><td>${badge(q.status)}</td>
+        <td class="nowrap"><button onclick="app.editDoc('quote','${q.id}')">Otevřít</button>
+          <button class="ghost" onclick="app.printDoc('quote','${q.id}')">🖨️</button>
+          <button class="x" onclick="app.delQuote('${q.id}')">✕</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">Žádné nabídky v tomto výběru.</p>'}
   </section>`;
 }
 
-function viewInvoice() {
-  const i = S.invoices.find(x => x.id === editInvoiceId);
-  if (!i) { tab = 'faktury'; return viewInvoices(); }
-  const c = i.customer, s = i.supplier;
-  const t = invTotals(i);
-  const F = (path, label, type = 'text') => `<label>${label}<input type="${type}" value="${esc(getPath(i, path))}" onchange="app.setInv('${path}',this.value)"></label>`;
+function viewInvoices() {
+  const years = [...new Set([String(new Date().getFullYear()), ...S.invoices.map(i => (i.issued || '').slice(0, 4))])].filter(Boolean).sort().reverse();
+  const inYear = S.invoices.filter(i => invFilter.year === 'all' || (i.issued || '').startsWith(invFilter.year));
+  const sum = arr => arr.reduce((a, i) => a + docTotals(i).total, 0);
+  const paid = inYear.filter(i => i.paid), unpaid = inYear.filter(i => !i.paid), overdue = inYear.filter(isOverdue);
+  const list = inYear.filter(i => invFilter.status === 'all' || (invFilter.status === 'paid' ? i.paid : invFilter.status === 'unpaid' ? !i.paid : isOverdue(i)))
+    .sort((a, b) => String(b.number).localeCompare(String(a.number)));
+  const quoteNo = id => (S.quotes.find(q => q.id === id) || {}).number || '';
+  return `<section class="card"><div class="row between wrap"><h2>Faktury</h2>
+    <div class="row wrap">
+      <select onchange="app.setInvFilter('year',this.value)">${[...years, 'all'].map(y => `<option value="${y}" ${invFilter.year === y ? 'selected' : ''}>${y === 'all' ? 'Všechny roky' : y}</option>`).join('')}</select>
+      <select onchange="app.setInvFilter('status',this.value)">${[['all', 'Všechny'], ['unpaid', 'Nezaplacené'], ['overdue', 'Po splatnosti'], ['paid', 'Zaplacené']].map(([k, n]) => `<option value="${k}" ${invFilter.status === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <button class="ghost" onclick="app.newInvoice()">+ Prázdná faktura</button></div></div>
+    <div class="stats">
+      <div><span>Vyfakturováno (${inYear.length})</span><b>${kc(sum(inYear))}</b></div>
+      <div><span>Zaplaceno (${paid.length})</span><b class="ok">${kc(sum(paid))}</b></div>
+      <div><span>Čeká na platbu (${unpaid.length})</span><b>${kc(sum(unpaid))}</b></div>
+      <div><span>Po splatnosti (${overdue.length})</span><b class="${overdue.length ? 'late' : ''}">${kc(sum(overdue))}</b></div>
+    </div>
+    ${list.length ? `<div class="tablewrap"><table>
+      <thead><tr><th>Číslo</th><th>Odběratel</th><th>Nabídka</th><th>Vystaveno</th><th>Splatnost</th><th class="r">Celkem</th><th>Zaplaceno</th><th></th></tr></thead><tbody>
+      ${list.map(i => `<tr class="${isOverdue(i) ? 'overdue' : ''}">
+        <td><b>${esc(i.number)}</b></td><td>${esc(i.customer.name)}</td>
+        <td>${i.quoteId ? `<a href="#" onclick="app.editDoc('quote','${i.quoteId}');return false">${esc(quoteNo(i.quoteId))}</a>` : ''}</td>
+        <td>${fmtDate(i.issued)}</td><td>${fmtDate(i.due)}${isOverdue(i) ? ' <span class="late small">po splatnosti</span>' : ''}</td>
+        <td class="r">${kc(docTotals(i).total)}</td>
+        <td><label class="chk"><input type="checkbox" ${i.paid ? 'checked' : ''} onchange="app.setPaid('${i.id}',this.checked)">${i.paid && i.paidDate ? fmtDate(i.paidDate) : ''}</label></td>
+        <td class="nowrap"><button onclick="app.editDoc('invoice','${i.id}')">Upravit</button>
+        <button class="ghost" onclick="app.printDoc('invoice','${i.id}')">🖨️</button>
+        <button class="x" onclick="app.delInvoice('${i.id}')">✕</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">Žádné faktury v tomto výběru.</p>'}
+  </section>`;
+}
+
+function curDoc() { return editKind === 'quote' ? S.quotes.find(x => x.id === editId) : S.invoices.find(x => x.id === editId); }
+
+function viewDocEditor() {
+  const d = curDoc();
+  if (!d) { tab = editKind === 'quote' ? 'nabidky' : 'faktury'; return render(); }
+  const isQ = editKind === 'quote';
+  const t = docTotals(d);
+  const F = (path, label, type = 'text') => `<label>${label}<input type="${type}" value="${esc(getPath(d, path))}" onchange="app.setDoc('${path}',this.value)"></label>`;
+  const order = d.orderId && S.orders.find(o => o.id === d.orderId);
+  const inv = isQ && d.invoiceId && S.invoices.find(i => i.id === d.invoiceId);
+  const quote = !isQ && d.quoteId && S.quotes.find(q => q.id === d.quoteId);
+  let actions = `<button onclick="app.printDoc('${editKind}','${d.id}')">🖨️ Tisk / PDF</button>`;
+  if (isQ) {
+    if (d.status === 'koncept') actions += `<button class="ghost" onclick="app.setQStatus('odeslana')">📨 Označit jako odeslanou</button>`;
+    if (['koncept', 'odeslana', 'zamitnuta'].includes(d.status)) actions += `<button class="okbtn" onclick="app.setQStatus('potvrzena')">✅ Zákazník potvrdil</button>`;
+    if (['koncept', 'odeslana'].includes(d.status)) actions += `<button class="x" onclick="app.setQStatus('zamitnuta')">Zamítnuto</button>`;
+    if (d.status === 'potvrzena') actions += `<button class="okbtn" onclick="app.invoiceFromQuote()">🧾 Vytvořit fakturu</button>`;
+    if (inv) actions += `<button class="ghost" onclick="app.editDoc('invoice','${inv.id}')">Otevřít fakturu ${esc(inv.number)}</button>`;
+    if (order) actions += `<button class="ghost" onclick="app.openOrder('${order.id}')">Otevřít zakázku</button>`;
+  } else if (quote) actions += `<button class="ghost" onclick="app.editDoc('quote','${quote.id}')">Nabídka ${esc(quote.number)}</button>`;
+  actions += `<button class="ghost" onclick="app.go('${isQ ? 'nabidky' : 'faktury'}')">← Zpět</button>`;
+
   return `
   <section class="card">
-    <div class="row between"><h2>Faktura ${esc(i.number)}</h2>
-      <div class="row"><button onclick="app.printInvoice('${i.id}')">🖨️ Tisk / PDF</button><button class="ghost" onclick="app.go('faktury')">← Zpět</button></div></div>
+    <div class="row between wrap"><h2>${isQ ? 'Cenová nabídka' : 'Faktura'} ${esc(d.number)} ${isQ ? badge(d.status) : (d.paid ? '<span class="badge st-potvrzena">Zaplaceno</span>' : isOverdue(d) ? '<span class="badge st-zamitnuta">Po splatnosti</span>' : '')}</h2></div>
+    <div class="row wrap actions">${actions}</div>
+    ${isQ && d.status === 'vyfakturovana' ? '<p class="warn">Nabídka je už vyfakturovaná – změny tady se do faktury nepromítnou, uprav i fakturu.</p>' : ''}
     <div class="grid">
-      ${F('number', 'Číslo faktury')}
-      ${F('vs', 'Variabilní symbol')}
-      ${F('issued', 'Datum vystavení', 'date')}
-      ${F('duzp', 'DUZP', 'date')}
-      ${F('due', 'Splatnost', 'date')}
-      ${F('payment', 'Způsob úhrady')}
+      ${isQ ? F('number', 'Číslo nabídky') + F('date', 'Datum', 'date') + F('validUntil', 'Platnost do', 'date') + F('name', 'Název zakázky') + F('place', 'Místo realizace')
+            : F('number', 'Číslo faktury') + F('vs', 'Variabilní symbol') + F('issued', 'Datum vystavení', 'date') + F('duzp', 'DUZP', 'date') + F('due', 'Splatnost', 'date') + F('payment', 'Způsob úhrady')}
     </div>
-    <h3>Odběratel</h3>
+    ${!isQ ? `<label class="chk"><input type="checkbox" ${d.paid ? 'checked' : ''} onchange="app.setPaid('${d.id}',this.checked)"> zaplaceno</label>` : ''}
+    <h3>${isQ ? 'Zákazník' : 'Odběratel'}</h3>
     <div class="grid">
       ${F('customer.name', 'Jméno / firma')}${F('customer.address', 'Adresa')}
       ${F('customer.ico', 'IČO')}${F('customer.dic', 'DIČ')}
       ${F('customer.email', 'E-mail')}${F('customer.phone', 'Telefon')}
     </div>
-    <details><summary>Dodavatel na této faktuře</summary>
+    <details><summary>Dodavatel na tomto dokladu</summary>
       <div class="grid">${F('supplier.name', 'Jméno / firma')}${F('supplier.address', 'Adresa')}${F('supplier.ico', 'IČO')}${F('supplier.dic', 'DIČ')}
       ${F('supplier.bank', 'Číslo účtu')}${F('supplier.iban', 'IBAN')}${F('supplier.phone', 'Telefon')}${F('supplier.email', 'E-mail')}</div>
       <button class="ghost" onclick="app.refreshSupplier()">Načíst z Nastavení</button>
     </details>
-    <label class="chk"><input type="checkbox" ${i.vatPayer ? 'checked' : ''} onchange="app.setInv('vatPayer',this.checked)"> plátce DPH (sazba ${i.vatRate} %)</label>
+    <label class="chk"><input type="checkbox" ${d.vatPayer ? 'checked' : ''} onchange="app.setDoc('vatPayer',this.checked)"> plátce DPH (sazba ${d.vatRate} %)</label>
   </section>
   <section class="card">
     <h3>Položky</h3>
     <div class="tablewrap"><table class="lines">
-      <thead><tr><th>Popis</th><th class="r">Množství</th><th>Jedn.</th><th class="r">Cena/j.</th><th class="r">Celkem</th><th></th></tr></thead><tbody>
-      ${i.lines.map((l, k) => `<tr>
-        <td><input class="wide" value="${esc(l.name)}" onchange="app.setInvLine(${k},'name',this.value)"></td>
-        <td class="r"><input class="n" type="number" step="0.5" value="${esc(l.qty)}" onchange="app.setInvLine(${k},'qty',this.value)"></td>
-        <td><input class="u" value="${esc(l.unit)}" onchange="app.setInvLine(${k},'unit',this.value)"></td>
-        <td class="r"><input class="n" type="number" step="1" value="${esc(l.price)}" onchange="app.setInvLine(${k},'price',this.value)"></td>
+      <thead><tr><th>Popis</th><th>Skupina</th><th class="r">Množství</th><th>Jedn.</th><th class="r">Cena/j.</th><th class="r">Celkem</th><th></th></tr></thead><tbody>
+      ${d.lines.map((l, k) => `<tr class="${l.group === 'material' ? 'mat' : ''}">
+        <td><input class="wide" value="${esc(l.name)}" onchange="app.setDocLine(${k},'name',this.value)"></td>
+        <td><select onchange="app.setDocLine(${k},'group',this.value)">${Object.entries(GROUPS).map(([g, n]) => `<option value="${g}" ${(l.group || 'prace') === g ? 'selected' : ''}>${n}</option>`).join('')}</select></td>
+        <td class="r"><input class="n" type="number" step="any" value="${esc(l.qty)}" onchange="app.setDocLine(${k},'qty',this.value)"></td>
+        <td><input class="u" value="${esc(l.unit)}" onchange="app.setDocLine(${k},'unit',this.value)"></td>
+        <td class="r"><input class="n" type="number" step="0.01" value="${esc(l.price)}" onchange="app.setDocLine(${k},'price',this.value)"></td>
         <td class="r">${kc(num(l.qty) * num(l.price))}</td>
-        <td><button class="x" onclick="app.delInvLine(${k})">✕</button></td></tr>`).join('')}
+        <td><button class="x" onclick="app.delDocLine(${k})">✕</button></td></tr>`).join('')}
       </tbody></table></div>
-    <button class="ghost" onclick="app.addInvLine()">+ Řádek</button>
+    <button class="ghost" onclick="app.addDocLine()">+ Řádek</button>
     <div class="totals">
-      ${i.vatPayer ? `<div>Základ <b>${kc(t.base)}</b></div><div>DPH ${i.vatRate} % <b>${kc(t.vat)}</b></div>` : ''}
-      <div class="big">K úhradě <b>${kc(t.total)}</b></div>
+      ${d.vatPayer ? `<div>Základ <b>${kc(t.base)}</b></div><div>DPH ${d.vatRate} % <b>${kc(t.vat)}</b></div>` : ''}
+      <div class="big">${isQ ? 'Celkem' : 'K úhradě'} <b>${kc(t.total)}</b></div>
     </div>
-    <label>Text na faktuře (poznámka)<textarea rows="2" onchange="app.setInv('note',this.value)">${esc(i.note)}</textarea></label>
+    <label>Text na dokladu (poznámka)<textarea rows="2" onchange="app.setDoc('note',this.value)">${esc(d.note)}</textarea></label>
   </section>
-  <section class="card"><h3>Náhled</h3><div class="preview">${docHTML('invoice', i)}</div></section>`;
+  <section class="card"><h3>Náhled</h3><div class="preview">${docHTML(editKind, d)}</div></section>`;
 }
 
 function getPath(o, p) { return p.split('.').reduce((a, k) => (a ? a[k] : ''), o) ?? ''; }
@@ -486,13 +645,17 @@ function viewSettings() {
     <div class="grid">
       ${N('dueDays', 'Splatnost (dní)')}
       ${N('nextInvNo', 'Další pořadové číslo faktury')}
+      ${N('nextQuoteNo', 'Další pořadové číslo nabídky')}
+      ${N('quoteValidDays', 'Platnost nabídky (dní)')}
       ${N('vatRate', 'Sazba DPH (%)')}
     </div>
     <label class="chk"><input type="checkbox" ${s.vatPayer ? 'checked' : ''} onchange="app.setS('vatPayer',this.checked)"> jsem plátce DPH</label>
-    <p class="muted small">Další faktura dostane číslo <b>${nextInvNumber()}</b>.</p>
+    <p class="muted small">Další faktura dostane číslo <b>${nextInvNumber()}</b>, další nabídka <b>${nextQuoteNumber()}</b>.
+    QR platba se na fakturu přidá sama, když je vyplněné číslo účtu nebo IBAN${ibanFor(S.settings.supplier) ? ` (IBAN: ${esc(ibanFor(S.settings.supplier))})` : ''}.</p>
   </section>
-  <section class="card"><h2>Záloha dat</h2>
-    <p class="muted small">Data se ukládají jen v tomhle prohlížeči. Občas si stáhni zálohu.</p>
+  <section class="card"><h2>Ukládání a záloha</h2>
+    <p class="muted small">${syncText()}</p>
+    ${API ? '<p><button class="ghost" onclick="app.logout()">Změnit heslo / odhlásit</button></p>' : ''}
     <div class="row wrap">
       <button onclick="app.exportData()">⬇️ Stáhnout zálohu</button>
       <label class="btn ghost">⬆️ Nahrát zálohu<input type="file" accept=".json" hidden onchange="app.importData(this.files[0])"></label>
@@ -501,38 +664,73 @@ function viewSettings() {
   </section>`;
 }
 
-function nextInvNumber() { return `${new Date().getFullYear()}${String(S.settings.nextInvNo).padStart(4, '0')}`; }
+const yr = () => new Date().getFullYear();
+function nextInvNumber() { return `${yr()}${String(S.settings.nextInvNo).padStart(4, '0')}`; }
+function nextQuoteNumber() { return `N${yr()}${String(S.settings.nextQuoteNo).padStart(4, '0')}`; }
+
+// ---------- QR platba ----------
+function czIban(acc) {
+  const m = String(acc || '').replace(/\s/g, '').match(/^(?:(\d{1,6})-)?(\d{2,10})\/(\d{4})$/);
+  if (!m) return '';
+  const bban = m[3] + (m[1] || '').padStart(6, '0') + m[2].padStart(10, '0');
+  const chk = 98n - (BigInt(bban + '123500') % 97n);
+  return 'CZ' + String(chk).padStart(2, '0') + bban;
+}
+function ibanFor(s) { const i = String(s.iban || '').replace(/\s/g, '').toUpperCase(); return i || czIban(s.bank); }
+function qrSvg(d) {
+  if (typeof qrcode !== 'function') return '';
+  const iban = ibanFor(d.supplier || {});
+  const amount = docTotals(d).total;
+  if (!iban || !(amount > 0)) return '';
+  const vs = String(d.vs || '').replace(/\D/g, '').slice(0, 10);
+  let spd = `SPD*1.0*ACC:${iban}*AM:${amount.toFixed(2)}*CC:CZK`;
+  if (vs) spd += `*X-VS:${vs}`;
+  spd += `*MSG:FAKTURA ${String(d.number).replace(/[^0-9A-Za-z -]/g, '')}`;
+  const qr = qrcode(0, 'M'); qr.addData(spd); qr.make();
+  return qr.createSvgTag({ cellSize: 3, margin: 0, scalable: true });
+}
 
 // ---------- dokument pro tisk ----------
 function docHTML(kind, d) {
   const isInv = kind === 'invoice';
-  const s = d.supplier, c = d.customer;
+  const s = d.supplier || {}, c = d.customer || {};
   const lines = d.lines;
-  const t = totals(lines, d.vatPayer, d.vatRate);
+  const t = docTotals(d);
   const title = isInv ? (d.vatPayer ? 'Faktura – daňový doklad' : 'Faktura') : 'Cenová nabídka';
   const party = (h, p) => `<div class="party"><div class="lbl">${h}</div><b>${esc(p.name) || '—'}</b>
     ${p.address ? `<div>${esc(p.address).replace(/\n/g, '<br>')}</div>` : ''}
     ${p.ico ? `<div>IČO: ${esc(p.ico)}</div>` : ''}${p.dic ? `<div>DIČ: ${esc(p.dic)}</div>` : ''}
     ${p.phone ? `<div>Tel.: ${esc(p.phone)}</div>` : ''}${p.email ? `<div>${esc(p.email)}</div>` : ''}</div>`;
+  const row = l => `<tr><td>${esc(l.name)}</td><td class="r">${num(l.qty).toLocaleString('cs-CZ')}</td><td>${esc(l.unit)}</td><td class="r">${kc(l.price)}</td><td class="r">${kc(num(l.qty) * num(l.price))}</td></tr>`;
+  const groups = Object.keys(GROUPS).filter(g => lines.some(l => (l.group || 'prace') === g));
+  const body = groups.length > 1
+    ? groups.map(g => { const ls = lines.filter(l => (l.group || 'prace') === g);
+        return `<tr class="grp"><td colspan="4">${GROUPS[g]}</td><td class="r">${kc(ls.reduce((a, l) => a + num(l.qty) * num(l.price), 0))}</td></tr>${ls.map(row).join('')}`; }).join('')
+    : lines.map(row).join('');
+  const qr = isInv ? qrSvg(d) : '';
   return `<div class="doc">
-    <div class="doc-head"><h1>${title}</h1><div class="docno">${isInv ? 'č. ' + esc(d.number) : esc(d.name || '')}</div></div>
+    <div class="doc-head"><h1>${title}</h1><div class="docno">č. ${esc(d.number)}</div></div>
     <div class="parties">${party(isInv ? 'Dodavatel' : 'Zhotovitel', s)}${party(isInv ? 'Odběratel' : 'Zákazník', c)}</div>
     <div class="meta">
       ${isInv ? `<div>Datum vystavení: <b>${fmtDate(d.issued)}</b></div><div>DUZP: <b>${fmtDate(d.duzp)}</b></div>
       <div>Datum splatnosti: <b>${fmtDate(d.due)}</b></div><div>Způsob úhrady: <b>${esc(d.payment)}</b></div>
-      ${s.bank ? `<div>Číslo účtu: <b>${esc(s.bank)}</b></div>` : ''}${s.iban ? `<div>IBAN: <b>${esc(s.iban)}</b></div>` : ''}
+      ${s.bank ? `<div>Číslo účtu: <b>${esc(s.bank)}</b></div>` : ''}${ibanFor(s) ? `<div>IBAN: <b>${esc(ibanFor(s))}</b></div>` : ''}
       <div>Variabilní symbol: <b>${esc(d.vs)}</b></div>`
-      : `<div>Datum: <b>${fmtDate(d.date)}</b></div>${d.place ? `<div>Místo realizace: <b>${esc(d.place)}</b></div>` : ''}`}
+      : `<div>Datum: <b>${fmtDate(d.date)}</b></div><div>Platnost nabídky do: <b>${fmtDate(d.validUntil)}</b></div>
+      ${d.name ? `<div>Zakázka: <b>${esc(d.name)}</b></div>` : ''}${d.place ? `<div>Místo realizace: <b>${esc(d.place)}</b></div>` : ''}`}
     </div>
     <table class="doc-lines"><thead><tr><th>Popis</th><th class="r">Množství</th><th>Jedn.</th><th class="r">Cena/j.</th><th class="r">Celkem</th></tr></thead><tbody>
-      ${lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r">${num(l.qty).toLocaleString('cs-CZ')}</td><td>${esc(l.unit)}</td><td class="r">${kc(l.price)}</td><td class="r">${kc(num(l.qty) * num(l.price))}</td></tr>`).join('')}
+      ${body}
     </tbody></table>
-    <div class="doc-totals">
-      ${d.vatPayer ? `<div>Základ daně: <b>${kc(t.base)}</b></div><div>DPH ${d.vatRate} %: <b>${kc(t.vat)}</b></div>` : ''}
-      <div class="big">${isInv ? 'K úhradě' : 'Cena celkem'}: <b>${kc(t.total)}</b></div>
+    <div class="doc-bottom">
+      ${qr ? `<div class="qr">${qr}<div>QR Platba</div></div>` : '<div></div>'}
+      <div class="doc-totals">
+        ${d.vatPayer ? `<div>Základ daně: <b>${kc(t.base)}</b></div><div>DPH ${d.vatRate} %: <b>${kc(t.vat)}</b></div>` : ''}
+        <div class="big">${isInv ? 'K úhradě' : 'Cena celkem'}: <b>${kc(t.total)}</b></div>
+      </div>
     </div>
     ${d.note ? `<p class="doc-note">${esc(d.note).replace(/\n/g, '<br>')}</p>` : ''}
-    <p class="doc-foot">${d.vatPayer ? '' : 'Dodavatel není plátcem DPH.'} ${isInv ? '' : 'Nabídka je platná 30 dní.'}</p>
+    <p class="doc-foot">${d.vatPayer ? '' : 'Dodavatel není plátcem DPH.'}</p>
   </div>`;
 }
 
@@ -541,10 +739,31 @@ function doPrint(html) {
   setTimeout(() => window.print(), 50);
 }
 
-function orderToDoc(o) {
-  return { name: o.name, date: o.date, place: o.place, note: o.note, customer: o.customer, supplier: S.settings.supplier,
-    vatPayer: S.settings.vatPayer, vatRate: S.settings.vatRate,
-    lines: orderRows(o).all.map(r => ({ name: r.name, unit: r.unit, qty: r.qty, price: Math.round(r.price * 100) / 100 })) };
+function orderLines(o) {
+  return orderRows(o).all.map(r => ({ name: r.name, unit: r.unit, qty: r.qty, price: r2(r.price),
+    group: r.material ? 'material' : r.auto && !r.name.startsWith('Doplatek') ? 'ostatni' : 'prace' }));
+}
+
+function makeQuote(o) {
+  const s = S.settings;
+  const number = nextQuoteNumber();
+  s.nextQuoteNo = num(s.nextQuoteNo) + 1;
+  const q = { id: uid(), number, status: 'koncept', date: today(), validUntil: addDays(today(), num(s.quoteValidDays) || 30),
+    name: o.name, place: o.place, orderId: o.id, customer: JSON.parse(JSON.stringify(o.customer)), supplier: { ...s.supplier },
+    lines: orderLines(o), note: o.note || '', vatPayer: s.vatPayer, vatRate: s.vatRate, invoiceId: null };
+  S.quotes.push(q);
+  return q;
+}
+
+function makeInvoice({ customer, lines, orderId = null, quoteId = null, note = '' }) {
+  const s = S.settings;
+  const number = nextInvNumber();
+  s.nextInvNo = num(s.nextInvNo) + 1;
+  const inv = { id: uid(), number, vs: number, issued: today(), duzp: today(), due: addDays(today(), num(s.dueDays) || 14),
+    payment: 'Bankovní převod', supplier: { ...s.supplier }, customer, lines, note, orderId, quoteId, paid: false,
+    vatPayer: s.vatPayer, vatRate: s.vatRate };
+  S.invoices.push(inv);
+  return inv;
 }
 
 // ---------- akce ----------
@@ -557,11 +776,11 @@ const app = {
     if (S.current.lines.length && !S.orders.some(o => o.id === S.current.id) && !confirm('Aktuální zakázka není uložená. Zahodit?')) return;
     S.current = newOrder(); save(); render();
   },
-  saveOrder() {
+  saveOrder(silent) {
     const o = JSON.parse(JSON.stringify(S.current));
     const k = S.orders.findIndex(x => x.id === o.id);
     if (k >= 0) S.orders[k] = o; else S.orders.push(o);
-    save(); render(); toast('Zakázka uložena');
+    save(); if (!silent) { render(); toast('Zakázka uložena'); }
   },
   openOrder(id) { const o = S.orders.find(x => x.id === id); if (!o) return; S.current = JSON.parse(JSON.stringify(o)); save(); go('zakazka'); },
   copyOrder(id) { const o = S.orders.find(x => x.id === id); if (!o) return; const c = JSON.parse(JSON.stringify(o)); c.id = uid(); c.name = (c.name || '') + ' (kopie)'; c.date = today(); S.current = c; save(); go('zakazka'); },
@@ -619,31 +838,65 @@ const app = {
     l[k] = v; save(); render();
   },
   delLine(id) { S.current.lines = S.current.lines.filter(x => x.id !== id); save(); render(); },
-  printQuote() { doPrint(docHTML('quote', orderToDoc(S.current))); },
 
-  // faktury
-  invoiceFromOrder() {
+  // nabídky
+  quoteFromOrder(forceNew) {
     const o = S.current;
     if (!o.lines.length) { alert('Zakázka nemá žádné položky.'); return; }
-    if (!S.orders.some(x => x.id === o.id)) app.saveOrder();
-    const doc = orderToDoc(o);
-    const inv = makeInvoice({ customer: JSON.parse(JSON.stringify(o.customer)), lines: doc.lines, orderId: o.id,
-      note: o.place ? `Montáž oplocení – ${o.place}` : 'Montáž oplocení' });
-    editInvoiceId = inv.id; tab = 'faktura'; render(); window.scrollTo(0, 0);
+    const q = makeQuote(o);
+    o.quoteId = q.id;
+    app.saveOrder(true);
+    app.editDoc('quote', q.id); toast('Nabídka ' + q.number + ' vytvořena');
   },
+  updateQuote() {
+    const o = S.current, q = S.quotes.find(x => x.id === o.quoteId); if (!q) return;
+    if (q.status === 'potvrzena' && !confirm('Nabídka je už potvrzená zákazníkem. Přepsat položky podle zakázky?')) return;
+    q.lines = orderLines(o); q.customer = JSON.parse(JSON.stringify(o.customer)); q.name = o.name; q.place = o.place;
+    app.saveOrder(true);
+    app.editDoc('quote', q.id); toast('Nabídka aktualizována');
+  },
+  newQuote() {
+    const q = makeQuote(newOrder()); q.orderId = null; q.lines = [{ name: '', unit: 'ks', qty: 1, price: 0, group: 'prace' }];
+    save(); app.editDoc('quote', q.id);
+  },
+  setQuoteFilter(v) { quoteFilter = v; render(); },
+  setQStatus(st) { const q = curDoc(); q.status = st; if (st === 'potvrzena') q.confirmedDate = today(); save(); render(); },
+  invoiceFromQuote() {
+    const q = curDoc(); if (!q) return;
+    const inv = makeInvoice({ customer: JSON.parse(JSON.stringify(q.customer)), lines: JSON.parse(JSON.stringify(q.lines)),
+      orderId: q.orderId, quoteId: q.id, note: q.place ? `Montáž oplocení – ${q.place}` : (q.name || 'Montáž oplocení') });
+    q.status = 'vyfakturovana'; q.invoiceId = inv.id;
+    save(); app.editDoc('invoice', inv.id); toast('Faktura ' + inv.number + ' vytvořena');
+  },
+  delQuote(id) {
+    const q = S.quotes.find(x => x.id === id);
+    if (!confirm(`Smazat nabídku ${q.number}?`)) return;
+    S.quotes = S.quotes.filter(x => x.id !== id); save(); render();
+  },
+
+  // doklady (nabídka i faktura)
+  editDoc(kind, id) { editKind = kind; editId = id; tab = 'doklad'; render(); window.scrollTo(0, 0); },
+  printDoc(kind, id) { const d = (kind === 'quote' ? S.quotes : S.invoices).find(x => x.id === id); doPrint(docHTML(kind, d)); },
+  setDoc(path, v) { setPath(curDoc(), path, v); save(); render(); },
+  setDocLine(k, f, v) { curDoc().lines[k][f] = (f === 'qty' || f === 'price') ? num(v) : v; save(); render(); },
+  addDocLine() { curDoc().lines.push({ name: '', unit: 'ks', qty: 1, price: 0, group: 'prace' }); save(); render(); },
+  delDocLine(k) { curDoc().lines.splice(k, 1); save(); render(); },
+  refreshSupplier() { curDoc().supplier = { ...S.settings.supplier }; save(); render(); },
+
+  // faktury
   newInvoice() {
-    const inv = makeInvoice({ customer: { name: '', address: '', ico: '', dic: '', email: '', phone: '' }, lines: [{ name: '', unit: 'ks', qty: 1, price: 0 }] });
-    editInvoiceId = inv.id; tab = 'faktura'; render();
+    const inv = makeInvoice({ customer: { name: '', address: '', ico: '', dic: '', email: '', phone: '' }, lines: [{ name: '', unit: 'ks', qty: 1, price: 0, group: 'prace' }] });
+    save(); app.editDoc('invoice', inv.id);
   },
-  editInvoice(id) { editInvoiceId = id; tab = 'faktura'; render(); window.scrollTo(0, 0); },
-  setInv(path, v) { const i = S.invoices.find(x => x.id === editInvoiceId); setPath(i, path, v); save(); render(); },
-  setInvLine(k, f, v) { const i = S.invoices.find(x => x.id === editInvoiceId); i.lines[k][f] = (f === 'qty' || f === 'price') ? num(v) : v; save(); render(); },
-  addInvLine() { const i = S.invoices.find(x => x.id === editInvoiceId); i.lines.push({ name: '', unit: 'ks', qty: 1, price: 0 }); save(); render(); },
-  delInvLine(k) { const i = S.invoices.find(x => x.id === editInvoiceId); i.lines.splice(k, 1); save(); render(); },
-  refreshSupplier() { const i = S.invoices.find(x => x.id === editInvoiceId); i.supplier = { ...S.settings.supplier }; save(); render(); },
-  setPaid(id, v) { S.invoices.find(x => x.id === id).paid = v; save(); render(); },
-  delInvoice(id) { if (!confirm('Smazat fakturu?')) return; S.invoices = S.invoices.filter(x => x.id !== id); save(); render(); },
-  printInvoice(id) { doPrint(docHTML('invoice', S.invoices.find(x => x.id === id))); },
+  setInvFilter(k, v) { invFilter[k] = v; render(); },
+  setPaid(id, v) { const i = S.invoices.find(x => x.id === id); i.paid = v; i.paidDate = v ? today() : null; save(); render(); },
+  delInvoice(id) {
+    const i = S.invoices.find(x => x.id === id);
+    if (!confirm(`Smazat fakturu ${i.number}?`)) return;
+    const q = i.quoteId && S.quotes.find(x => x.id === i.quoteId);
+    if (q) { q.status = 'potvrzena'; q.invoiceId = null; }
+    S.invoices = S.invoices.filter(x => x.id !== id); save(); render();
+  },
 
   // ceník
   setItem(id, k, v) {
@@ -671,6 +924,7 @@ const app = {
   // nastavení
   setS(k, v, isNum) { S.settings[k] = isNum ? num(v) : v; save(); render(); },
   setSup(k, v) { S.settings.supplier[k] = v; save(); },
+  logout() { localStorage.removeItem(PW_KEY); location.reload(); },
   exportData() {
     const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `ploty-zaloha-${today()}.json`; a.click();
@@ -680,22 +934,11 @@ const app = {
     file.text().then(t => {
       try { const d = JSON.parse(t); if (!d.catalog || !d.settings) throw new Error('neplatný soubor');
         if (!confirm('Přepsat současná data zálohou?')) return;
-        localStorage.setItem(KEY, JSON.stringify(d)); S = load(); render(); toast('Záloha nahrána');
+        localStorage.setItem(KEY, JSON.stringify(d)); S = load(); save(); render(); toast('Záloha nahrána');
       } catch (e) { alert('Soubor se nepodařilo načíst: ' + e.message); }
     });
   },
 };
-
-function makeInvoice({ customer, lines, orderId = null, note = '' }) {
-  const s = S.settings;
-  const number = nextInvNumber();
-  s.nextInvNo = num(s.nextInvNo) + 1;
-  const inv = { id: uid(), number, vs: number, issued: today(), duzp: today(), due: addDays(today(), num(s.dueDays) || 14),
-    payment: 'Bankovní převod', supplier: { ...s.supplier }, customer, lines, note, orderId, paid: false,
-    vatPayer: s.vatPayer, vatRate: s.vatRate };
-  S.invoices.push(inv); save();
-  return inv;
-}
 
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -705,3 +948,5 @@ function toast(msg) {
 window.app = app;
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 render();
+setSync(sync.state);
+pull();

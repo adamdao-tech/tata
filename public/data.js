@@ -231,5 +231,7 @@ const DEFAULT_SETTINGS = {
   vatRate: 21,
   dueDays: 14,
   nextInvNo: 1,
+  nextQuoteNo: 1,
+  quoteValidDays: 30,
   supplier: { name: '', address: '', ico: '', dic: '', bank: '', iban: '', phone: '', email: '', web: '' },
 };
