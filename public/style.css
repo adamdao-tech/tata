@@ -110,3 +110,6 @@ button.okbtn { background: #22603a; border-color: #22603a; }
 .setbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; background: #eef4ef; border: 1px solid #cfe1d3; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
 .setbar.editing { background: #fff6dc; border-color: #ecd99a; position: sticky; top: 56px; z-index: 4; }
 input:disabled { background: #f7f6f3; color: var(--ink); border-color: #e3e0d9; }
+.doc-pay { margin-top: 16px; border: 1px solid #ccc; border-left: 4px solid #2f6b3f; padding: 8px 12px; background: #fafaf8; }
+.doc-pay .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #666; margin-bottom: 2px; }
+textarea:disabled { background: #f7f6f3; color: var(--ink); border-color: #e3e0d9; }

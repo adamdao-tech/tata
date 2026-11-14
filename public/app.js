@@ -214,7 +214,7 @@ function orderRows(o) {
     if (work < m) extra.push({ name: 'Doplatek do minimální ceny montáže', unit: 'ks', qty: 1, price: m - work, total: m - work, auto: true });
   }
   const bc = betonCalc(o);
-  if (bc.m3 > 0) extra.push({ name: 'Beton', unit: 'm³', qty: bc.m3, price: bc.unit, total: bc.total, auto: true });
+  if (bc.m3 > 0 && bc.unit > 0) extra.push({ name: 'Beton', unit: 'm³', qty: bc.m3, price: bc.unit, total: bc.total, auto: true });
   const km = num(o.km);
   if (km > 0) {
     let t = Math.max(km * num(s.kmRate), num(s.kmMin));
@@ -578,6 +578,7 @@ function viewDocEditor() {
       ${d.vatPayer ? `<div>Základ <b>${kc(t.base)}</b></div><div>DPH ${d.vatRate} % <b>${kc(t.vat)}</b></div>` : ''}
       <div class="big">${isQ ? 'Celkem' : 'K úhradě'} <b>${kc(t.total)}</b></div>
     </div>
+    ${isQ ? `<label>Platební podmínky<textarea rows="2" onchange="app.setDoc('payment',this.value)">${esc(quotePayment(d))}</textarea></label>` : ''}
     <label>Text na dokladu (poznámka)<textarea rows="2" onchange="app.setDoc('note',this.value)">${esc(d.note)}</textarea></label>
   </section>
   <section class="card"><h3>Náhled</h3><div class="preview">${docHTML(editKind, d)}</div></section>`;
@@ -661,6 +662,7 @@ function viewSettings() {
       ${N('nextInvNo', 'Další pořadové číslo faktury')}
       ${N('nextQuoteNo', 'Další pořadové číslo nabídky')}
       ${N('quoteValidDays', 'Platnost nabídky (dní)')}
+      <label style="grid-column:1/-1">Platební podmínky na cenové nabídce<textarea ${dis} rows="2" onchange="app.setS('quotePayment',this.value)">${esc(s.quotePayment)}</textarea></label>
       ${N('vatRate', 'Sazba DPH (%)')}
     </div>
     ${C('vatPayer', 'jsem plátce DPH')}${warnDic}
@@ -743,10 +745,14 @@ function docHTML(kind, d) {
         <div class="big">${isInv ? 'K úhradě' : 'Cena celkem'}: <b>${kc(t.total)}</b></div>
       </div>
     </div>
+    ${!isInv && quotePayment(d) ? `<div class="doc-pay"><div class="lbl">Platební podmínky</div>${esc(quotePayment(d)).replace(/\n/g, '<br>')}</div>` : ''}
     ${d.note ? `<p class="doc-note">${esc(d.note).replace(/\n/g, '<br>')}</p>` : ''}
     <p class="doc-foot">${d.vatPayer ? '' : 'Dodavatel není plátcem DPH.'}</p>
   </div>`;
 }
+
+// starší nabídky pole nemají → použij výchozí text z Nastavení
+function quotePayment(d) { return d.payment !== undefined ? d.payment : (S.settings.quotePayment || ''); }
 
 function doPrint(html) {
   $('#print').innerHTML = html;
@@ -764,7 +770,7 @@ function makeQuote(o) {
   s.nextQuoteNo = num(s.nextQuoteNo) + 1;
   const q = { id: uid(), number, status: 'koncept', date: today(), validUntil: addDays(today(), num(s.quoteValidDays) || 30),
     name: o.name, place: o.place, orderId: o.id, customer: JSON.parse(JSON.stringify(o.customer)), supplier: { ...s.supplier },
-    lines: orderLines(o), note: o.note || '', vatPayer: s.vatPayer, vatRate: s.vatRate, invoiceId: null };
+    lines: orderLines(o), note: o.note || '', payment: s.quotePayment || '', vatPayer: s.vatPayer, vatRate: s.vatRate, invoiceId: null };
   S.quotes.push(q);
   return q;
 }
